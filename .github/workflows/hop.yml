@@ -1,0 +1,113 @@
+name: hop
+# Basin-hopping campaign for the Kaggle "Squares in Squares" competition (team Mais Oui).
+# Each matrix job builds Evan Daniel's `packer` and `fq` (MIT, github.com/evand/square-packing), hops its slice of the
+# gap-weighted target list from our current packings (seeds/sq09.csv.gz), re-quenches every hop output with fq,
+# certifies with the metric copy, and uploads its merged submission as an artifact. The final job merges the slices and
+# publishes the result as a release asset (downloaded by our Kaggle merge notebook).
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: number of parallel jobs (slices)
+        default: "20"
+      hop_min:
+        description: minutes of hop per job and candidate
+        default: "24"
+      seeds:
+        description: hop seeds per candidate
+        default: "2"
+      seed0:
+        description: first hop seed
+        default: "1000"
+      budget_h:
+        description: wall-clock budget of the hop stage per job (hours)
+        default: "5.0"
+      targets:
+        description: total number of targets (gap-ranked non-grid puzzles), split over the jobs
+        default: "547"
+      skip:
+        description: skip the first N targets
+        default: "0"
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          n = int("${{ inputs.jobs }}")
+          print("matrix=" + json.dumps({"slice": list(range(n))}))
+          EOF
+
+  hop:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build packer and fq
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock
+          cd search/packer && cargo build --release --bin fq --bin packer 2>&1 | tail -2
+          ls -la target/release/fq target/release/packer
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: hop slice ${{ matrix.slice }}
+        run: |
+          mkdir -p seeds/sq09 out
+          gunzip -c seeds/sq09.csv.gz > seeds/sq09/submission.csv
+          cd hop
+          J=${{ inputs.jobs }}; T=${{ inputs.targets }}; S=${{ matrix.slice }}
+          PER=$(( (T + J - 1) / J )); SKIP=$(( ${{ inputs.skip }} + S * PER ))
+          echo "slice $S: targets $SKIP .. $((SKIP + PER))"
+          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
+          PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
+          SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
+          SQ_WORKERS=$(nproc) SQ_MAXC=1 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} \
+          HOP_SEED0=$(( ${{ inputs.seed0 }} + S * 100 )) HOP_NTARGET=$PER HOP_SKIP=$SKIP \
+          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 \
+          python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hop-${{ matrix.slice }}
+          path: out/submission.csv
+          retention-days: 7
+
+  merge:
+    needs: hop
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: slices
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certified merge of the slices and the seeds
+        run: |
+          mkdir -p seeds/sq09 out
+          gunzip -c seeds/sq09.csv.gz > seeds/sq09/submission.csv
+          cp -r seeds/sq09 slices/sq09
+          cd hop
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tail -20
+      - name: publish as release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=run-${{ github.run_number }}
+          gh release create "$TAG" out/submission.csv --title "hop run ${{ github.run_number }}" --notes "certified merge of run ${{ github.run_id }}" --latest
+          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"
