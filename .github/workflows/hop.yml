@@ -1,7 +1,7 @@
 name: hop
 # Basin-hopping campaign for the Kaggle "Squares in Squares" competition (team Mais Oui).
 # Each matrix job builds Evan Daniel's `packer` and `fq` (MIT, github.com/evand/square-packing), hops its slice of the
-# gap-weighted target list from our current packings (seeds/sq09.csv.gz), re-quenches every hop output with fq,
+# gap-weighted target list from our current packings (seeds/*.csv.gz and results/*.csv.gz), re-quenches every hop output with fq,
 # certifies with the metric copy, and uploads its merged submission as an artifact. The final job merges the slices and
 # publishes the result as a release asset (downloaded by our Kaggle merge notebook).
 on:
@@ -66,8 +66,9 @@ jobs:
         run: pip install -q numpy mpmath
       - name: hop slice ${{ matrix.slice }}
         run: |
-          mkdir -p seeds/sq09 out
-          gunzip -c seeds/sq09.csv.gz > seeds/sq09/submission.csv
+          mkdir -p out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds/$n"; gunzip -c "$f" > "seeds/$n/submission.csv"; done
+          ls seeds
           cd hop
           J=${{ inputs.jobs }}; T=${{ inputs.targets }}; S=${{ matrix.slice }}
           PER=$(( (T + J - 1) / J )); SKIP=$(( ${{ inputs.skip }} + S * PER ))
@@ -98,9 +99,9 @@ jobs:
         run: pip install -q numpy mpmath
       - name: certified merge of the slices and the seeds
         run: |
-          mkdir -p seeds/sq09 out
-          gunzip -c seeds/sq09.csv.gz > seeds/sq09/submission.csv
-          cp -r seeds/sq09 slices/sq09
+          mkdir -p out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          ls slices
           cd hop
           SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
           python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tail -20
