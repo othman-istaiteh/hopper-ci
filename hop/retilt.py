@@ -8,7 +8,7 @@ import numpy as np
 import sq09_requench as R
 
 
-def retilt(a, phi_new, respace):
+def retilt(a, phi_new, respace, shift=0.0):
     th = np.mod(a[:, 2], math.pi / 2)
     tilted = np.abs(np.mod(th + math.pi / 4, math.pi / 2) - math.pi / 4) > 0.02
     phis = np.degrees(th[tilted]) - 45
@@ -16,26 +16,28 @@ def retilt(a, phi_new, respace):
     sel = tilted.copy(); sel[tilted] = np.abs(phis - phi0) < 5  # the main strip only (747 holds a few other tilts)
     b = a.copy()
     b[sel, 2] = a[sel, 2] + math.radians(math.copysign(phi_new, phi0) - phi0)
-    if respace:
+    if respace or shift:
         C = a[sel, :2]; cc = C - C.mean(0); w, v = np.linalg.eigh(cc.T @ cc); d = v[:, 1]
         t = cc @ d
-        f = math.cos(math.radians(abs(phi0))) / math.cos(math.radians(phi_new))
-        b[sel, :2] = C.mean(0) + np.outer(t * f, d) + (cc - np.outer(t, d))
+        f = math.cos(math.radians(abs(phi0))) / math.cos(math.radians(phi_new)) if respace else 1.0
+        # shift: translate the whole strip along its own direction (phase of the rows against the block staircase)
+        b[sel, :2] = C.mean(0) + np.outer(t * f, d) + (cc - np.outer(t, d)) + shift * d
     return b, phi0, int(sel.sum())
 
 
 def main():
     src, out, ns, phis = sys.argv[1:5]
+    shifts = [float(x) for x in sys.argv[5].split(',')] if len(sys.argv) > 5 else [0.0]  # strip translations along itself
     rows = R.load(src)
     os.makedirs(out, exist_ok=True)
-    for variant in ('rot', 'resp'):
+    for variant, shift in [(v, s) for v in ('rot', 'resp') for s in shifts]:
         for phi in [float(x) for x in phis.split(',')]:
-            path = os.path.join(out, '%s_%g.csv.gz' % (variant, phi))
+            path = os.path.join(out, '%s_%g%s.csv.gz' % (variant, phi, ('_s%g' % shift) if shift else ''))
             with gzip.open(path, 'wt', newline='') as f:
                 w = csv.writer(f); w.writerow(['id', 'n', 'square_id', 'x', 'y', 'angle']); rid = 0
                 for n in [int(x) for x in ns.split(',')]:
                     a = R.arr(rows[n])
-                    b, phi0, k = retilt(a, phi, variant == 'resp')
+                    b, phi0, k = retilt(a, phi, variant == 'resp', shift)
                     for i, (x, y, t) in enumerate(b):
                         w.writerow([rid, n, i, repr(float(x)), repr(float(y)), repr(float(t))]); rid += 1
                     print('%s phi %g: n %d strip %d squares phi0 %.2f side %.4f -> bbox %.4f' % (variant, phi, n, k, phi0, R.side_arr(a), R.side_arr(b)))
