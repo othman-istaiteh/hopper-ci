@@ -90,7 +90,7 @@ jobs:
           ls seeds
           cd hop
           J=${{ inputs.jobs }}; T=${{ inputs.targets }}; S=${{ matrix.slice }}
-          NLIST="${{ inputs.nlist }}"; if [ "$NLIST" = "auto" ]; then NLIST=$(cat soft_list.txt); T=$(echo "$NLIST" | tr ',' '\n' | grep -c .); echo "auto list of $T puzzles"; fi
+          NLIST="${{ inputs.nlist }}"; if [ "$NLIST" = "auto" ]; then NLIST=$(cat soft_list.txt); L=$(echo "$NLIST" | tr ',' '\n' | grep -c .); T=$(( L - ${{ inputs.skip }} )); [ "$T" -gt "${{ inputs.targets }}" ] && T=${{ inputs.targets }}; echo "auto list of $L puzzles, this run: $T after skip ${{ inputs.skip }}"; fi
           PER=$(( (T + J - 1) / J )); SKIP=$(( ${{ inputs.skip }} + S * PER ))
           echo "slice $S: targets $SKIP .. $((SKIP + PER))"
           FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
