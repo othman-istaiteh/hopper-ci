@@ -1,0 +1,64 @@
+name: merge_now
+# On-demand certified merge and submission: seeds + results + the latest notebook merge output (Kaggle API) + the
+# submission.csv assets of the given releases; publishes release merge-<run_number> (submission.csv, merge.log) and
+# submits to Kaggle when better than our best submission (hop/kaggle_submit.py rules).
+on:
+  workflow_dispatch:
+    inputs:
+      releases:
+        description: comma-separated release tags whose submission.csv to include (e.g. "run-7,run-10,polish-1")
+        default: ""
+      fetch_kaggle:
+        description: include the latest output of our merge notebook ("yes" / "no")
+        default: "yes"
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: python deps
+        run: pip install -q numpy mpmath kaggle
+      - name: gather candidates
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p slices out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          for t in $(echo "${{ inputs.releases }}" | tr ',' ' '); do
+            mkdir -p "slices/rel_${t//-/_}"
+            gh release download "$t" -p submission.csv -D "slices/rel_${t//-/_}" --clobber && echo "release $t fetched" || echo "release $t: no submission.csv"
+          done
+          if [ "${{ inputs.fetch_kaggle }}" = "yes" ] && [ -n "$KAGGLE_KEY" ]; then
+            mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+            export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+            mkdir -p slices/kaggle_merge
+            kaggle kernels output "$KAGGLE_USERNAME/notebook5586544269" -p slices/kaggle_merge || echo "Kaggle output fetch failed"
+            find slices/kaggle_merge -type f ! -name submission.csv -delete || true
+          fi
+          ls slices
+      - name: certified merge
+        run: |
+          cd hop
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -20
+      - name: publish and submit
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=merge-${{ github.run_number }}
+          gh release create "$TAG" out/submission.csv --title "on-demand merge ${{ github.run_number }}" --notes "releases: ${{ inputs.releases }}"
+          if [ -n "$KAGGLE_KEY" ]; then
+            mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+            export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+            python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub on-demand merge ${{ github.run_number }} (${{ inputs.releases }})" | tee -a out/merge.log
+          fi
+          gh release upload "$TAG" out/merge.log --clobber
