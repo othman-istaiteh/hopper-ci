@@ -29,6 +29,15 @@ jobs:
           kaggle kernels list --competition "$C" --sort-by dateRun --page-size 40 -v > out/kernels_by_date.csv || true
           kaggle competitions submissions -c "$C" -v > out/submissions.csv || true
           kaggle competitions leaderboard -c "$C" --show > out/leaderboard_top.txt || true
+          mkdir -p lb && kaggle competitions leaderboard -c "$C" --download -p lb && (cd lb && unzip -o -q *.zip && ls) && python3 - <<'PY' > out/our_rank.txt || true
+          import csv, glob
+          rows = list(csv.DictReader(open(glob.glob('lb/*.csv')[0])))
+          rows.sort(key=lambda r: float(r['Score']))
+          for i, r in enumerate(rows, 1):
+              if 'Mais Oui' in r['TeamName'] or i <= 3 or i in (50, 80, 90, 100):
+                  print(i, r['TeamName'], r['Score'], r.get('SubmissionDate', ''))
+          print('teams', len(rows))
+          PY
           mkdir -p board && kaggle kernels output inversion/squares-in-squares-per-puzzle-leaderboard -p board || true
           ls -la board; for f in board/*.csv board/*.txt board/*.json; do [ -f "$f" ] && cp "$f" "out/board_$(basename "$f")"; done; true
           wc -l out/*
