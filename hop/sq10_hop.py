@@ -17,6 +17,8 @@ WORK = os.environ.get('SQ_WORK', '/kaggle/working/hop')
 HOP_ARGS = os.environ.get('HOP_ARGS', '').split()  # extra packer hop options, e.g. '--descend 3e-5 --amp 0.7' (defaults 1e-4, 1.0)
 ENGINE = os.environ.get('HOP_ENGINE', 'hop')  # 'hop' = packer hop, 'shrink' = fq --shrink --hops (30 Oct test: 20x the gain per core-hour)
 SHRINK_DEFAULT = ['--loosen', '1.02', '--hops', '20', '--hop-sigma', '0.02', '--hop-k', '3']
+TARGET_FRAC = float(os.environ.get('HOP_TARGET_FRAC', '0'))  # 0 = classic hop; 0.3 .. 1.0 = start the walk that far towards the board side
+TARGET = {}  # n -> board side, filled in main() from SQ_BOARD
 
 
 def hop_job(job):
@@ -35,8 +37,19 @@ def hop_job(job):
                 # step fails; deterministic per seed, converges in minutes. HOP_ARGS: fq options (--hops, --hop-sigma, --hop-k, --loosen, --d0).
                 subprocess.run([R.FQ, 'quench', '--in', inp, '--out', hp, '--shrink', '--seed', str(seed), '--deadline', str(int(minutes * 60)),
                                 '--pit', '60', '--flip-top', '8'] + (HOP_ARGS or SHRINK_DEFAULT), capture_output=True, text=True, timeout=minutes * 60 + 600)
+            elif ENGINE == 'hhop':
+                # the packer's second engine: hard-square basin hopping (loosen, event chains, squeeze, Metropolis on the side);
+                # HOP_ARGS e.g. '--temp 1e-4 --chains 8 --chainlen 1.0 --gmax 0.02 --forbid-lines 1'
+                subprocess.run([PACKER, 'hhop', '--in', inp, '--seed', str(seed), '--iters', '100000000', '--out', hp] + HOP_ARGS,
+                               capture_output=True, text=True, timeout=minutes * 60)
             else:
-                subprocess.run([PACKER, 'hop', '--in', inp, '--s', '%.17g' % s0, '--seed', str(seed), '--iters', '100000000', '--out', hp, '--quiet'] + HOP_ARGS,
+                # target-side hop: with HOP_TARGET_FRAC f > 0 the walk starts at S = s0 - f (s0 - board side), i.e. on the penalty
+                # landscape at (a fraction of) the leaders' density, where rows can break and the topology can change; the
+                # output is written only when the walk reaches feasibility (default f = 0: start 1e-4 below our side)
+                S = s0
+                if TARGET_FRAC > 0 and TARGET.get(n, 9e9) < s0:
+                    S = s0 - TARGET_FRAC * (s0 - TARGET[n])
+                subprocess.run([PACKER, 'hop', '--in', inp, '--s', '%.17g' % S, '--seed', str(seed), '--iters', '100000000', '--out', hp, '--quiet'] + HOP_ARGS,
                                capture_output=True, text=True, timeout=minutes * 60)
         except subprocess.TimeoutExpired:
             pass
@@ -96,6 +109,7 @@ def main(out_path):
         cands[n] = keep[:maxc]
     cands = {n: v for n, v in cands.items() if v}
     board = load_board(os.environ.get('SQ_BOARD', 'board_29oct.txt')) if os.path.exists(os.environ.get('SQ_BOARD', 'board_29oct.txt')) else {}
+    TARGET.update(board)
     nmin, nmax = int(os.environ.get('SQ_NMIN', '1')), int(os.environ.get('SQ_NMAX', '1000'))
     minutes = float(os.environ.get('HOP_MIN', '20')); seeds = int(os.environ.get('HOP_SEEDS', '1')); seed0 = int(os.environ.get('HOP_SEED0', '100'))
     ntarget = int(os.environ.get('HOP_NTARGET', '1000'))

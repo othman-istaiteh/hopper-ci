@@ -35,8 +35,11 @@ on:
         description: lowest puzzle size to hop (SQ_NMIN)
         default: "1"
       engine:
-        description: hop = packer hop; shrink = fq --shrink --hops (HOP_ARGS then holds fq options)
+        description: hop = packer hop; shrink = fq --shrink --hops (HOP_ARGS then holds fq options); hhop = packer hhop (hard-square event-chain hopping)
         default: "hop"
+      target_frac:
+        description: target-side hop (engine hop only) - start the walk this fraction of the way from our side to the board side (0 = classic)
+        default: "0"
       nlist:
         description: explicit comma-separated puzzle list (overrides the gap ranking; targets/skip then slice this list); "auto" = hop/soft_list.txt (kept up to date by the merge job)
         default: ""
@@ -98,7 +101,7 @@ jobs:
           SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
           SQ_WORKERS=$(nproc) SQ_MAXC=1 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} \
           HOP_SEED0=$(( ${{ inputs.seed0 }} + S * 100 )) HOP_NTARGET=$PER HOP_SKIP=$SKIP \
-          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" SQ_NMIN=${{ inputs.nmin }} HOP_ENGINE=${{ inputs.engine }} HOP_NLIST="$NLIST" \
+          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" SQ_NMIN=${{ inputs.nmin }} HOP_ENGINE=${{ inputs.engine }} HOP_NLIST="$NLIST" HOP_TARGET_FRAC=${{ inputs.target_frac }} \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES"
       - uses: actions/upload-artifact@v4
         with:
@@ -171,7 +174,7 @@ jobs:
             -f "inputs[jobs]=${{ inputs.jobs }}" -f "inputs[hop_min]=${{ inputs.hop_min }}" -f "inputs[seeds]=${{ inputs.seeds }}" \
             -f "inputs[seed0]=$SEED0" -f "inputs[budget_h]=${{ inputs.budget_h }}" -f "inputs[targets]=${{ inputs.targets }}" \
             -f "inputs[skip]=${{ inputs.skip }}" -f "inputs[hop_args]=${{ inputs.hop_args }}" -f "inputs[nmin]=${{ inputs.nmin }}" \
-            -f "inputs[label]=${{ inputs.label }}" -f "inputs[chain]=$NEXT" -f "inputs[engine]=${{ inputs.engine }}" -f "inputs[nlist]=${{ inputs.nlist }}"
+            -f "inputs[label]=${{ inputs.label }}" -f "inputs[chain]=$NEXT" -f "inputs[engine]=${{ inputs.engine }}" -f "inputs[nlist]=${{ inputs.nlist }}" -f "inputs[target_frac]=${{ inputs.target_frac }}"
           echo "dispatched the next run: chain $NEXT, seed0 $SEED0"
       - name: attach the merge log to the release (readable from the sandbox, unlike job logs)
         if: always()
