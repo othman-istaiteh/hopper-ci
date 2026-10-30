@@ -100,10 +100,22 @@ def hop_job(job):
                         f.write('%.17g %.17g %.15g\n' % (x, y, math.degrees(t) % 90.0))
                 subprocess.run([R.FQ, 'quench', '--in', inp, '--out', hp, '--seed', str(seed), '--deadline', str(int(minutes * 60))]
                                + (HOP_ARGS or (INSERT_DEFAULT if INSERT_K else REMOVE_DEFAULT)), capture_output=True, text=True, timeout=minutes * 60 + 600)
-            elif ENGINE == 'quench':
-                # plain fq quench from a possibly overlapping start (design seeds): HOP_ARGS = fq options, default --loosen 1.03
-                subprocess.run([R.FQ, 'quench', '--in', inp, '--out', hp, '--seed', str(seed), '--deadline', str(int(minutes * 60))]
-                               + (HOP_ARGS or INSERT_DEFAULT), capture_output=True, text=True, timeout=minutes * 60 + 600)
+            elif ENGINE in ('quench', 'quenchhop'):
+                # plain fq quench from a possibly overlapping start (design seeds): HOP_ARGS = fq options, default --loosen 1.03.
+                # quenchhop: then packer hop --temp 1.0 from the quenched state for the rest of the time (design seeds need the
+                # full pipeline to settle, a quench alone returns to the nearest lock)
+                qm = minutes if ENGINE == 'quench' else min(minutes, 3.0)
+                q0 = os.path.join(d, 'q0.txt')
+                subprocess.run([R.FQ, 'quench', '--in', inp, '--out', q0 if ENGINE == 'quenchhop' else hp, '--seed', str(seed),
+                                '--deadline', str(int(qm * 60))] + (HOP_ARGS if ENGINE == 'quench' and HOP_ARGS else INSERT_DEFAULT),
+                               capture_output=True, text=True, timeout=qm * 60 + 600)
+                if ENGINE == 'quenchhop' and os.path.exists(q0):
+                    sq, rq = R.from_fq(q0)
+                    subprocess.run([PACKER, 'hop', '--in', q0, '--s', '%.17g' % (sq - 1e-4), '--seed', str(seed), '--iters', '100000000',
+                                    '--out', hp, '--quiet', '--temp', '1.0'] + HOP_ARGS, capture_output=True, text=True,
+                                   timeout=max(60, (minutes - qm) * 60))
+                    if not os.path.exists(hp):
+                        hp = q0
             elif ENGINE == 'shrink':
                 # fq shrink-hopping (SQUISH-style): grow to feasibility, shrink the side step by step, kick a few squares when a
                 # step fails; deterministic per seed, converges in minutes. HOP_ARGS: fq options (--hops, --hop-sigma, --hop-k, --loosen, --d0).
