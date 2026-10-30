@@ -115,7 +115,16 @@ jobs:
         with:
           path: slices
       - name: python deps
-        run: pip install -q numpy mpmath
+        run: pip install -q numpy mpmath kaggle
+      - name: fetch the latest Kaggle merge output (public packings included) when the Kaggle token is configured
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token: skipped"; exit 0; fi
+          mkdir -p slices/kaggle_merge
+          kaggle kernels output istatieh/notebook5586544269 -p slices/kaggle_merge && ls -la slices/kaggle_merge || echo "Kaggle output fetch failed"
+          find slices/kaggle_merge -type f ! -name submission.csv -delete || true
       - name: certified merge of the slices and the seeds
         run: |
           mkdir -p out
@@ -123,7 +132,7 @@ jobs:
           ls slices
           cd hop
           SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
-          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tail -20
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -20
       - name: publish as release asset
         env:
           GH_TOKEN: ${{ github.token }}
@@ -131,6 +140,13 @@ jobs:
           TAG=run-${{ github.run_number }}
           gh release create "$TAG" out/submission.csv --title "hop run ${{ github.run_number }}" --notes "certified merge of run ${{ github.run_id }}" --latest
           echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"
+      - name: submit to Kaggle when better than our best submission (token configured, daily budget left)
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token: skipped"; exit 0; fi
+          python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub ${{ inputs.label }} hop run ${{ github.run_number }}"
       - name: commit the merge as the chain's seed file
         if: inputs.label != ''
         run: |
