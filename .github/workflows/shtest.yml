@@ -1,0 +1,44 @@
+name: shtest
+# A/B test of search engines on a few puzzles (hop/shtest.py): packer hop vs fq --shrink --hops configurations.
+on:
+  workflow_dispatch:
+    inputs:
+      cfgs:
+        description: JSON list of configs (hop, sh100, sh102, sh100b, sh100d)
+        default: '["hop", "sh100", "sh102", "sh100b"]'
+      targets:
+        description: puzzles
+        default: "865,742,587,648,911,498"
+      minutes:
+        description: minutes per run
+        default: "15"
+      seeds:
+        description: seeds per puzzle
+        default: "2"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg: ${{ fromJson(inputs.cfgs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build packer and fq
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock
+          cd search/packer && cargo build --release --bin fq --bin packer 2>&1 | tail -2
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: test ${{ matrix.cfg }}
+        run: |
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds/$n"; gunzip -c "$f" > "seeds/$n/submission.csv"; done
+          cd hop
+          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
+          PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
+          SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_WORKERS=$(nproc) \
+          ST_CFG=${{ matrix.cfg }} ST_N="${{ inputs.targets }}" ST_MIN=${{ inputs.minutes }} ST_SEEDS=${{ inputs.seeds }} \
+          python3 -u shtest.py
