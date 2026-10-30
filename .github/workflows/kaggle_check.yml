@@ -18,5 +18,9 @@ jobs:
           if [ -z "$KAGGLE_KEY" ]; then echo "KAGGLE_KEY secret is empty or missing"; exit 1; fi
           if [ -z "$KAGGLE_USERNAME" ]; then echo "KAGGLE_USERNAME secret is empty or missing"; exit 1; fi
           echo "username length ${#KAGGLE_USERNAME}, key length ${#KAGGLE_KEY}"
+          # the CLI accepts either a legacy kaggle.json (username + key) or a new-style API token (KAGGLE_API_TOKEN)
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          kaggle --version || true
           kaggle competitions submissions -c squares-in-squares -v | head -4
           kaggle kernels list --mine --page-size 3

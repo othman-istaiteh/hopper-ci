@@ -122,6 +122,8 @@ jobs:
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
         run: |
           if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token: skipped"; exit 0; fi
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
           mkdir -p slices/kaggle_merge
           kaggle kernels output istatieh/notebook5586544269 -p slices/kaggle_merge && ls -la slices/kaggle_merge || echo "Kaggle output fetch failed"
           find slices/kaggle_merge -type f ! -name submission.csv -delete || true
@@ -146,6 +148,8 @@ jobs:
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
         run: |
           if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token: skipped"; exit 0; fi
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
           python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub ${{ inputs.label }} hop run ${{ github.run_number }}"
       - name: commit the merge as the chain's seed file
         if: inputs.label != ''
