@@ -1,0 +1,22 @@
+name: kaggle_check
+# Checks that the Kaggle token stored as repository secrets works: lists our last submissions (no submission is made).
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: kaggle CLI
+        run: pip install -q kaggle
+      - name: list submissions
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          if [ -z "$KAGGLE_KEY" ]; then echo "KAGGLE_KEY secret is empty or missing"; exit 1; fi
+          if [ -z "$KAGGLE_USERNAME" ]; then echo "KAGGLE_USERNAME secret is empty or missing"; exit 1; fi
+          echo "username length ${#KAGGLE_USERNAME}, key length ${#KAGGLE_KEY}"
+          kaggle competitions submissions -c squares-in-squares -v | head -4
+          kaggle kernels list --mine --page-size 3
