@@ -1,0 +1,107 @@
+name: polish
+# Deep-polish experiment for the Kaggle "Squares in Squares" competition (team Mais Oui).
+# Each matrix job builds Evan Daniel's `fq` (MIT, github.com/evand/square-packing), takes its slice of our non-grid
+# packings (seeds/*.csv.gz and results/*.csv.gz, ordered by gap to the per-puzzle board), runs his POLISH_DEEP schedule
+# (`fq quench --no-alm --loosen 1.0 --pit 600 --flip-top 64 --finish`) and his exact corner-corner descent
+# (search/exact/descend.py) on every packing, certifies with the metric copy, and uploads its merged submission as an
+# artifact. The final job merges the slices with the seeds and publishes the result as a release asset.
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: number of parallel jobs (slices)
+        default: "20"
+      deadline:
+        description: fq --deadline per puzzle (seconds)
+        default: "900"
+      targets:
+        description: total number of targets (gap-ranked non-grid puzzles), split over the jobs
+        default: "547"
+      skip:
+        description: skip the first N targets
+        default: "0"
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          n = int("${{ inputs.jobs }}")
+          print("matrix=" + json.dumps({"slice": list(range(n))}))
+          EOF
+
+  polish:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build fq and fetch the exact descent
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock \
+            /search/exact/descend.py /search/exact/exactsolve.py /search/exact/geom.py /search/exact/verify_cert.py /search/exact/conesupport.py \
+            /search/packer/slp2.py /search/packer/slp.py /search/packer/rigid.py /search/packer/inc.py
+          cd search/packer && cargo build --release --bin fq 2>&1 | tail -2
+          ls -la target/release/fq ../exact/descend.py
+      - name: python deps
+        run: pip install -q numpy mpmath scipy
+      - name: polish slice ${{ matrix.slice }}
+        run: |
+          mkdir -p out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds/$n"; gunzip -c "$f" > "seeds/$n/submission.csv"; done
+          ls seeds
+          cd hop
+          J=${{ inputs.jobs }}; T=${{ inputs.targets }}; S=${{ matrix.slice }}
+          PER=$(( (T + J - 1) / J )); SKIP=$(( ${{ inputs.skip }} + S * PER ))
+          echo "slice $S: targets $SKIP .. $((SKIP + PER))"
+          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
+          PO_DESCEND=$GITHUB_WORKSPACE/evand/search/exact/descend.py \
+          SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
+          SQ_WORKERS=$(nproc) PO_DEADLINE=${{ inputs.deadline }} PO_NTARGET=$PER PO_SKIP=$SKIP \
+          PO_DESC_TIMEOUT=600 PO_BUDGET_H=5.0 \
+          python3 -u polish.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: polish-${{ matrix.slice }}
+          path: out/submission.csv
+          retention-days: 7
+
+  merge:
+    needs: polish
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: slices
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certified merge of the slices and the seeds
+        run: |
+          mkdir -p out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          ls slices
+          cd hop
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tail -20
+      - name: publish as release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=polish-${{ github.run_number }}
+          gh release create "$TAG" out/submission.csv --title "polish run ${{ github.run_number }}" --notes "certified merge of polish run ${{ github.run_id }}" --latest
+          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"
