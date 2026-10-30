@@ -31,9 +31,19 @@ on:
       hop_args:
         description: extra packer hop options passed through (e.g. "--descend 3e-5 --amp 0.7"; defaults 1e-4, 1.0)
         default: ""
+      nmin:
+        description: lowest puzzle size to hop (SQ_NMIN)
+        default: "1"
+      label:
+        description: chain label; the merge is committed as seeds/<label>.csv.gz (empty = not committed)
+        default: ""
+      chain:
+        description: number of further runs to dispatch automatically after this one (same inputs, seed0 + 1000)
+        default: "0"
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   plan:
@@ -81,7 +91,7 @@ jobs:
           SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
           SQ_WORKERS=$(nproc) SQ_MAXC=1 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} \
           HOP_SEED0=$(( ${{ inputs.seed0 }} + S * 100 )) HOP_NTARGET=$PER HOP_SKIP=$SKIP \
-          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" \
+          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" SQ_NMIN=${{ inputs.nmin }} \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES"
       - uses: actions/upload-artifact@v4
         with:
@@ -115,3 +125,23 @@ jobs:
           TAG=run-${{ github.run_number }}
           gh release create "$TAG" out/submission.csv --title "hop run ${{ github.run_number }}" --notes "certified merge of run ${{ github.run_id }}" --latest
           echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"
+      - name: commit the merge as the chain's seed file
+        if: inputs.label != ''
+        run: |
+          gzip -9 -c out/submission.csv > "seeds/${{ inputs.label }}.csv.gz"
+          git config user.name "squares-hop bot" && git config user.email "bot@users.noreply.github.com"
+          git add "seeds/${{ inputs.label }}.csv.gz"
+          git commit -q -m "seeds: ${{ inputs.label }} = merge of hop run ${{ github.run_number }}" || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 10)); done
+      - name: dispatch the next run of the chain
+        if: inputs.chain != '0' && inputs.chain != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEXT=$(( ${{ inputs.chain }} - 1 )); SEED0=$(( ${{ inputs.seed0 }} + 1000 ))
+          gh api -X POST "repos/${{ github.repository }}/actions/workflows/hop.yml/dispatches" -f ref=main \
+            -f "inputs[jobs]=${{ inputs.jobs }}" -f "inputs[hop_min]=${{ inputs.hop_min }}" -f "inputs[seeds]=${{ inputs.seeds }}" \
+            -f "inputs[seed0]=$SEED0" -f "inputs[budget_h]=${{ inputs.budget_h }}" -f "inputs[targets]=${{ inputs.targets }}" \
+            -f "inputs[skip]=${{ inputs.skip }}" -f "inputs[hop_args]=${{ inputs.hop_args }}" -f "inputs[nmin]=${{ inputs.nmin }}" \
+            -f "inputs[label]=${{ inputs.label }}" -f "inputs[chain]=$NEXT"
+          echo "dispatched the next run: chain $NEXT, seed0 $SEED0"
