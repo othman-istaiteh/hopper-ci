@@ -1,0 +1,53 @@
+name: kaggle_push
+# Push a new version of one of our Kaggle hop notebooks through the Kaggle API (no browser needed): builds the notebook
+# with hop/mk_sq10.py, pulls the kernel's current metadata (inputs), swaps the code file and pushes (Save & Run All).
+on:
+  workflow_dispatch:
+    inputs:
+      kernel:
+        description: kernel slug (sq10-cpu-hop or sq10-cpu-hop-b)
+        default: "sq10-cpu-hop-b"
+      args:
+        description: mk_sq10.py arguments "maxc hop_min seeds ntarget budget_h skip seed0 'hop_args' 'nlist'"
+        default: "1 16 3 53 10 0 2500 '' ''"
+      soft_nlist:
+        description: if "yes", the 9th argument (nlist) is replaced by the 53 soft puzzles list from hop/soft_list.txt
+        default: "yes"
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: pip install -q kaggle
+      - name: build the notebook
+        run: |
+          cd hop
+          if [ "${{ inputs.soft_nlist }}" = "yes" ]; then SOFT=$(cat soft_list.txt); else SOFT=""; fi
+          eval "set -- ${{ inputs.args }}"
+          python3 mk_sq10.py "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "${SOFT:-$9}"
+          python3 -c "import json; nb=json.load(open('sq10.ipynb')); print(len(nb['cells']), 'cells'); print(nb['cells'][-1]['source'][:400])"
+      - name: push to Kaggle
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          mkdir -p push && kaggle kernels pull "istatieh/${{ inputs.kernel }}" -m -p push
+          ls -la push && cat push/kernel-metadata.json
+          python3 - <<'PY'
+          import json, shutil, glob, os
+          m = json.load(open('push/kernel-metadata.json'))
+          for f in glob.glob('push/*.ipynb') + glob.glob('push/*.py'):
+              os.remove(f)
+          shutil.copy('hop/sq10.ipynb', 'push/sq10.ipynb')
+          m['code_file'] = 'sq10.ipynb'; m['kernel_type'] = 'notebook'; m['language'] = 'python'
+          m['enable_internet'] = True; m['enable_gpu'] = False; m['is_private'] = True
+          json.dump(m, open('push/kernel-metadata.json', 'w'), indent=1)
+          print(json.dumps(m, indent=1))
+          PY
+          kaggle kernels push -p push
+          sleep 20; kaggle kernels status "istatieh/${{ inputs.kernel }}"
