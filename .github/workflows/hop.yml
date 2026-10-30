@@ -101,7 +101,7 @@ jobs:
 
   merge:
     needs: hop
-    if: always()
+    if: ${{ !cancelled() }}    # runs after slice failures, not after a cancel (a cancel must stop a chain)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
