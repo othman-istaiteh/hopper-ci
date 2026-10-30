@@ -34,6 +34,9 @@ on:
       nmin:
         description: lowest puzzle size to hop (SQ_NMIN)
         default: "1"
+      engine:
+        description: hop = packer hop; shrink = fq --shrink --hops (HOP_ARGS then holds fq options)
+        default: "hop"
       label:
         description: chain label; the merge is committed as seeds/<label>.csv.gz (empty = not committed)
         default: ""
@@ -91,7 +94,7 @@ jobs:
           SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
           SQ_WORKERS=$(nproc) SQ_MAXC=1 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} \
           HOP_SEED0=$(( ${{ inputs.seed0 }} + S * 100 )) HOP_NTARGET=$PER HOP_SKIP=$SKIP \
-          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" SQ_NMIN=${{ inputs.nmin }} \
+          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" SQ_NMIN=${{ inputs.nmin }} HOP_ENGINE=${{ inputs.engine }} \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES"
       - uses: actions/upload-artifact@v4
         with:
@@ -143,5 +146,5 @@ jobs:
             -f "inputs[jobs]=${{ inputs.jobs }}" -f "inputs[hop_min]=${{ inputs.hop_min }}" -f "inputs[seeds]=${{ inputs.seeds }}" \
             -f "inputs[seed0]=$SEED0" -f "inputs[budget_h]=${{ inputs.budget_h }}" -f "inputs[targets]=${{ inputs.targets }}" \
             -f "inputs[skip]=${{ inputs.skip }}" -f "inputs[hop_args]=${{ inputs.hop_args }}" -f "inputs[nmin]=${{ inputs.nmin }}" \
-            -f "inputs[label]=${{ inputs.label }}" -f "inputs[chain]=$NEXT"
+            -f "inputs[label]=${{ inputs.label }}" -f "inputs[chain]=$NEXT" -f "inputs[engine]=${{ inputs.engine }}"
           echo "dispatched the next run: chain $NEXT, seed0 $SEED0"

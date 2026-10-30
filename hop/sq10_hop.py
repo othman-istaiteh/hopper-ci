@@ -15,6 +15,8 @@ import sq09_requench as R
 PACKER = os.environ.get('PACKER_BIN', '/kaggle/working/evand/search/packer/target/release/packer')
 WORK = os.environ.get('SQ_WORK', '/kaggle/working/hop')
 HOP_ARGS = os.environ.get('HOP_ARGS', '').split()  # extra packer hop options, e.g. '--descend 3e-5 --amp 0.7' (defaults 1e-4, 1.0)
+ENGINE = os.environ.get('HOP_ENGINE', 'hop')  # 'hop' = packer hop, 'shrink' = fq --shrink --hops (30 Oct test: 20x the gain per core-hour)
+SHRINK_DEFAULT = ['--loosen', '1.02', '--hops', '20', '--hop-sigma', '0.02', '--hop-k', '3']
 
 
 def hop_job(job):
@@ -28,8 +30,14 @@ def hop_job(job):
         inp = os.path.join(d, 'in.txt'); s0 = R.to_fq(a, inp)
         hp = os.path.join(d, 'hop.txt')
         try:
-            subprocess.run([PACKER, 'hop', '--in', inp, '--s', '%.17g' % s0, '--seed', str(seed), '--iters', '100000000', '--out', hp, '--quiet'] + HOP_ARGS,
-                           capture_output=True, text=True, timeout=minutes * 60)
+            if ENGINE == 'shrink':
+                # fq shrink-hopping (SQUISH-style): grow to feasibility, shrink the side step by step, kick a few squares when a
+                # step fails; deterministic per seed, converges in minutes. HOP_ARGS: fq options (--hops, --hop-sigma, --hop-k, --loosen, --d0).
+                subprocess.run([R.FQ, 'quench', '--in', inp, '--out', hp, '--shrink', '--seed', str(seed), '--deadline', str(int(minutes * 60)),
+                                '--pit', '60', '--flip-top', '8'] + (HOP_ARGS or SHRINK_DEFAULT), capture_output=True, text=True, timeout=minutes * 60 + 600)
+            else:
+                subprocess.run([PACKER, 'hop', '--in', inp, '--s', '%.17g' % s0, '--seed', str(seed), '--iters', '100000000', '--out', hp, '--quiet'] + HOP_ARGS,
+                               capture_output=True, text=True, timeout=minutes * 60)
         except subprocess.TimeoutExpired:
             pass
         srcs = [('hop', hp)] if os.path.exists(hp) else []
