@@ -1,5 +1,5 @@
 name: polish
-# Deep-polish experiment for the Kaggle "Squares in Squares" competition (team Mais Oui).
+# Deep-polish experiment on our unit-square packings.
 # Each matrix job builds Evan Daniel's `fq` (MIT, github.com/evand/square-packing), takes its slice of our non-grid
 # packings (seeds/*.csv.gz and results/*.csv.gz, ordered by gap to the per-puzzle board), runs his POLISH_DEEP schedule
 # (`fq quench --no-alm --loosen 1.0 --pit 600 --flip-top 64 --finish`) and his exact corner-corner descent

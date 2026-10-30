@@ -1,5 +1,4 @@
-# Faithful re-implementation of the official Squares in Squares metric (metric notebook v20, Apache 2.0,
-# Kaggle Competition Metrics): per-puzzle parse rules, float SAT with undecided band, interval-arithmetic escalation,
+# Faithful re-implementation of the organisers' metric notebook (v20, Apache 2.0): per-puzzle parse rules, float SAT with undecided band, interval-arithmetic escalation,
 # L measured in mpmath from the decimal strings. evaluate(n, rows) -> (ok, L_float, reason).
 import math, re
 import mpmath

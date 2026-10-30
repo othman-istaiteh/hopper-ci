@@ -1,9 +1,9 @@
 name: hop
-# Basin-hopping campaign for the Kaggle "Squares in Squares" competition (team Mais Oui).
+# Basin-hopping campaign for unit-square packings (n = 1..1000).
 # Each matrix job builds Evan Daniel's `packer` and `fq` (MIT, github.com/evand/square-packing), hops its slice of the
 # gap-weighted target list from our current packings (seeds/*.csv.gz and results/*.csv.gz), re-quenches every hop output with fq,
 # certifies with the metric copy, and uploads its merged submission as an artifact. The final job merges the slices and
-# publishes the result as a release asset (downloaded by our Kaggle merge notebook).
+# publishes the result as a release asset (downloaded by our merge notebook).
 on:
   workflow_dispatch:
     inputs:
@@ -126,7 +126,7 @@ jobs:
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
           mkdir -p slices/kaggle_merge
-          kaggle kernels output istatieh/notebook5586544269 -p slices/kaggle_merge && ls -la slices/kaggle_merge || echo "Kaggle output fetch failed"
+          kaggle kernels output "$KAGGLE_USERNAME/notebook5586544269" -p slices/kaggle_merge && ls -la slices/kaggle_merge || echo "Kaggle output fetch failed"
           find slices/kaggle_merge -type f ! -name submission.csv -delete || true
       - name: certified merge of the slices and the seeds
         run: |

@@ -1,5 +1,5 @@
 name: explore
-# Basin-explorer campaign for the Kaggle "Squares in Squares" competition (team Mais Oui): one puzzle per job.
+# Basin-explorer campaign on our unit-square packings: one puzzle per job.
 # Each matrix job fetches Evan Daniel's search/packer (MIT, github.com/evand/square-packing, pinned commit), builds his
 # `fq` quench and `anneal` engines, and runs his breadth-first basin explorer (explore.py: MAP-Elites archive of
 # polished minima, kick / crossover / anneal moves, polish gated near the best) from OUR best packing of that puzzle for

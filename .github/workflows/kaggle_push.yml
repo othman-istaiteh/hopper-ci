@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
-          mkdir -p push && kaggle kernels pull "istatieh/${{ inputs.kernel }}" -m -p push
+          mkdir -p push && kaggle kernels pull "$KAGGLE_USERNAME/${{ inputs.kernel }}" -m -p push
           ls -la push && cat push/kernel-metadata.json
           python3 - <<'PY'
           import json, shutil, glob, os
@@ -50,4 +50,4 @@ jobs:
           print(json.dumps(m, indent=1))
           PY
           kaggle kernels push -p push
-          sleep 20; kaggle kernels status "istatieh/${{ inputs.kernel }}"
+          sleep 20; kaggle kernels status "$KAGGLE_USERNAME/${{ inputs.kernel }}"

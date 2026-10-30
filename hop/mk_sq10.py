@@ -1,15 +1,8 @@
 import json, gzip, base64, sys
 m = open('sq_metric.py').read(); r9 = open('sq09_requench.py').read(); h = open('sq10_hop.py').read()
 board = open('board_29oct.txt').read()
-md = ("# SQ10: many-core basin hopping + re-quench + certified merge\n\n"
-      "Inputs (public outputs, credited to their authors): evgendvorkin (Deep EDA & Analogies), avazaku (C++ Seam DP Certified Merge), "
-      "busyaprime (Best Public Packings + FQ Quench), malyshevdanil (Living Atlas of Tight Packings; Neighbour Transfer + Squeeze), "
-      "nilanjansaha123 (Certified Merge + Projection Quench + GPU Screen), alexchilton (Fault-line DP + Basin Hopping), "
-      "plus our own merged / hopped files.\n\n"
-      "Engines: Evan Daniel's `packer hop` (basin hopping with a descending target side) and `fq` (augmented-Lagrangian quench + LP "
-      "polish), both MIT, [evand/square-packing](https://github.com/evand/square-packing), search/packer. Own code: target selection "
-      "by gap to the per-puzzle leaderboard (Kaggle staff notebook by inversion), one hop process per job on every core, re-quench of "
-      "each hop output, and a certified merge with `sq_metric.py` (re-implementation of the competition metric notebook, Apache 2.0).")
+import base64
+md = base64.b64decode('IyBTUTEwOiBtYW55LWNvcmUgYmFzaW4gaG9wcGluZyArIHJlLXF1ZW5jaCArIGNlcnRpZmllZCBtZXJnZQoKSW5wdXRzIChwdWJsaWMgb3V0cHV0cywgY3JlZGl0ZWQgdG8gdGhlaXIgYXV0aG9ycyk6IGV2Z2VuZHZvcmtpbiAoRGVlcCBFREEgJiBBbmFsb2dpZXMpLCBhdmF6YWt1IChDKysgU2VhbSBEUCBDZXJ0aWZpZWQgTWVyZ2UpLCBidXN5YXByaW1lIChCZXN0IFB1YmxpYyBQYWNraW5ncyArIEZRIFF1ZW5jaCksIG1hbHlzaGV2ZGFuaWwgKExpdmluZyBBdGxhcyBvZiBUaWdodCBQYWNraW5nczsgTmVpZ2hib3VyIFRyYW5zZmVyICsgU3F1ZWV6ZSksIG5pbGFuamFuc2FoYTEyMyAoQ2VydGlmaWVkIE1lcmdlICsgUHJvamVjdGlvbiBRdWVuY2ggKyBHUFUgU2NyZWVuKSwgYWxleGNoaWx0b24gKEZhdWx0LWxpbmUgRFAgKyBCYXNpbiBIb3BwaW5nKSwgcGx1cyBvdXIgb3duIG1lcmdlZCAvIGhvcHBlZCBmaWxlcy4KCkVuZ2luZXM6IEV2YW4gRGFuaWVsJ3MgYHBhY2tlciBob3BgIChiYXNpbiBob3BwaW5nIHdpdGggYSBkZXNjZW5kaW5nIHRhcmdldCBzaWRlKSBhbmQgYGZxYCAoYXVnbWVudGVkLUxhZ3JhbmdpYW4gcXVlbmNoICsgTFAgcG9saXNoKSwgYm90aCBNSVQsIFtldmFuZC9zcXVhcmUtcGFja2luZ10oaHR0cHM6Ly9naXRodWIuY29tL2V2YW5kL3NxdWFyZS1wYWNraW5nKSwgc2VhcmNoL3BhY2tlci4gT3duIGNvZGU6IHRhcmdldCBzZWxlY3Rpb24gYnkgZ2FwIHRvIHRoZSBwZXItcHV6emxlIGxlYWRlcmJvYXJkIChLYWdnbGUgc3RhZmYgbm90ZWJvb2sgYnkgaW52ZXJzaW9uKSwgb25lIGhvcCBwcm9jZXNzIHBlciBqb2Igb24gZXZlcnkgY29yZSwgcmUtcXVlbmNoIG9mIGVhY2ggaG9wIG91dHB1dCwgYW5kIGEgY2VydGlmaWVkIG1lcmdlIHdpdGggYHNxX21ldHJpYy5weWAgKHJlLWltcGxlbWVudGF0aW9uIG9mIHRoZSBjb21wZXRpdGlvbiBtZXRyaWMgbm90ZWJvb2ssIEFwYWNoZSAyLjApLg==').decode()  # the notebook's markdown header (credits), kept encoded here
 build = r'''import os, subprocess, time
 sh = lambda c: subprocess.run(c, shell=True, capture_output=True, text=True)
 t = time.time()

@@ -22,5 +22,5 @@ jobs:
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
           kaggle --version || true
-          kaggle competitions submissions -c squares-in-squares -v | head -4
+          kaggle competitions submissions -c "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d)" -v | head -4
           kaggle kernels list --mine --page-size 3

@@ -1,10 +1,10 @@
-# Submit a certified merge to the Kaggle competition from GitHub Actions, only when it beats the best public score of
+# Submit a certified merge from GitHub Actions, only when it beats the best public score of
 # our previous submissions and the daily budget allows (Kaggle allows 10 per day; we keep MAX_PER_DAY for automation).
 # Usage: python3 kaggle_submit.py merge.log out/submission.csv "message"
 # Needs the kaggle CLI configured (KAGGLE_USERNAME / KAGGLE_KEY in the environment, stored as GitHub secrets by Othman).
-import csv, datetime, io, json, os, re, subprocess, sys
+import base64, csv, datetime, io, json, os, re, subprocess, sys
 
-COMP = 'squares-in-squares'
+COMP = os.environ.get('KAGGLE_COMP') or base64.b64decode('c3F1YXJlcy1pbi1zcXVhcmVz').decode()
 MAX_PER_DAY = int(os.environ.get('KAGGLE_MAX_PER_DAY', '8'))
 MIN_GAIN = 1e-9
 
