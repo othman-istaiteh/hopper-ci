@@ -19,7 +19,7 @@ fi
 cd "$HOME/evand/search/packer" && cargo build --release --bin fq --bin packer 2>&1 | tail -2
 ls -la target/release/fq target/release/packer
 if [ ! -d "$HOME/hopper-ci" ]; then git clone -q https://github.com/othman-istaiteh/hopper-ci.git "$HOME/hopper-ci"; fi
-cd "$HOME/hopper-ci" && git config credential.helper store && git config user.name "pi worker" && git config user.email "pi@users.noreply.github.com"
+cd "$HOME/hopper-ci" && git config credential.helper store && git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
 chmod +x pi/pi_loop.sh
 sudo tee /etc/systemd/system/pi_hop.service > /dev/null <<EOF
 [Unit]

@@ -70,7 +70,7 @@ jobs:
         run: |
           if [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
             gzip -9 -c out/improved.csv > "results/harvest_$(date +%m%d).csv.gz"
-            git config user.name "harvest bot" && git config user.email "harvest@users.noreply.github.com"
+            git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add results/ && git commit -q -m "results: public harvest $(date +%F)" || true
             for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
           else
@@ -110,7 +110,7 @@ jobs:
         run: |
           if [ -s out/certs.csv ] && [ "$(wc -l < out/certs.csv)" -gt 1 ]; then
             gzip -9 -c out/certs.csv > "results/certs_$(date +%m%d).csv.gz"
-            git config user.name "harvest bot" && git config user.email "harvest@users.noreply.github.com"
+            git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add results/ && git commit -q -m "results: certificate harvest $(date +%F)" || true
             for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
           else
