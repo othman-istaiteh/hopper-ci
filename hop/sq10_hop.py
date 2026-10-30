@@ -243,6 +243,7 @@ def main(out_path):
             impl.append((n, orig, best[n][0])); gain += (orig - best[n][0]) / math.sqrt(n)
     print(f'search improved {len(impl)} puzzles (certified), score gain vs best original candidates {gain:.6f}', flush=True)
     print('IMPROVED ' + ' '.join('%d:%.9f>%.9f' % t for t in sorted(impl)), flush=True)
+    print('BESTTAG ' + ' '.join('%d:%s:%.9f' % (n, best[n][1][:60], best[n][0]) for n, o, b in sorted(impl)), flush=True)
     for n, log in sorted(fails)[:40]:
         print('rejected', n, log[:3], flush=True)
     src = {}
