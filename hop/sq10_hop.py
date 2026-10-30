@@ -102,7 +102,11 @@ def main(out_path):
     # gap-weighted target list: biggest (best candidate - board) / sqrt(n) first
     gaps = sorted(((cands[n][0][0] - board.get(n, cands[n][0][0])) / math.sqrt(n), n) for n in cands if nmin <= n <= nmax)[::-1]
     skip = int(os.environ.get('HOP_SKIP', '0'))  # skip the first `skip` targets (slice the list between notebooks)
-    targets = [n for g, n in gaps if g > 1e-9][skip:skip + ntarget]
+    targets = [n for g, n in gaps if g > 1e-9]
+    nlist = [int(x) for x in os.environ.get('HOP_NLIST', '').replace(' ', '').split(',') if x]
+    if nlist:  # explicit target list (e.g. the puzzles that keep yielding), in the given order, instead of the gap ranking
+        targets = [n for n in nlist if n in cands]
+    targets = targets[skip:skip + ntarget]
     print(f'targets {len(targets)} (of {len(cands)} non-grid puzzles), total gap to board {sum(g for g, n in gaps if g > 0):.5f}', flush=True)
     jobs = []
     for n in targets:
