@@ -150,7 +150,12 @@ jobs:
           if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token: skipped"; exit 0; fi
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
-          python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub ${{ inputs.label }} hop run ${{ github.run_number }}"
+          python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub ${{ inputs.label }} hop run ${{ github.run_number }}" | tee -a out/merge.log
+      - name: attach the merge log to the release (readable from the sandbox, unlike job logs)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "run-${{ github.run_number }}" out/merge.log --clobber || true
       - name: commit the merge as the chain's seed file
         if: inputs.label != ''
         run: |
