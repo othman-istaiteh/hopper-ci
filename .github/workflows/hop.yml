@@ -28,6 +28,9 @@ on:
       skip:
         description: skip the first N targets
         default: "0"
+      hop_args:
+        description: extra packer hop options passed through (e.g. "--descend 3e-5 --amp 0.7"; defaults 1e-4, 1.0)
+        default: ""
 
 permissions:
   contents: write
@@ -78,7 +81,7 @@ jobs:
           SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
           SQ_WORKERS=$(nproc) SQ_MAXC=1 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} \
           HOP_SEED0=$(( ${{ inputs.seed0 }} + S * 100 )) HOP_NTARGET=$PER HOP_SKIP=$SKIP \
-          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 \
+          HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES"
       - uses: actions/upload-artifact@v4
         with:
