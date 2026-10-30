@@ -13,6 +13,9 @@ on:
       soft_nlist:
         description: if "yes", the 9th argument (nlist) is replaced by the 53 soft puzzles list from hop/soft_list.txt
         default: "yes"
+      builder:
+        description: mk_sq10 (hop notebook) or mk_sq12 (the certified merge notebook; args = maxc, e.g. "3")
+        default: "mk_sq10"
 
 jobs:
   push:
@@ -27,7 +30,7 @@ jobs:
           cd hop
           if [ "${{ inputs.soft_nlist }}" = "yes" ]; then SOFT=$(cat soft_list.txt); else SOFT=""; fi
           eval "set -- ${{ inputs.args }}"
-          python3 mk_sq10.py "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "${SOFT:-$9}"
+          if [ "${{ inputs.builder }}" = "mk_sq12" ]; then python3 mk_sq12.py "$1" && mv sq12.ipynb sq10.ipynb; else python3 mk_sq10.py "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "${SOFT:-$9}"; fi
           python3 -c "import json; nb=json.load(open('sq10.ipynb')); print(len(nb['cells']), 'cells'); print(nb['cells'][-1]['source'][:400])"
       - name: push to Kaggle
         env:
