@@ -20,14 +20,16 @@ def sides(path):
 
 def main():
     root, merged, listfile = sys.argv[1:4]
-    best = {}
+    best = {}; hops = {}
     for p in glob.glob(os.path.join(root, '*', 'submission.csv')):
         tag = os.path.basename(os.path.dirname(p))
-        if tag.startswith('hop-') or tag == 'kaggle_merge':  # the run's own slices are the new results, not the baseline
+        if tag.startswith('hop-'):  # the run's own slices: what the search found
+            for n, s in sides(p).items():
+                hops[n] = min(hops.get(n, 9e9), s)
             continue
-        for n, s in sides(p).items():
+        for n, s in sides(p).items():  # seeds, results and the notebook merge: the baseline
             best[n] = min(best.get(n, 9e9), s)
-    new = sides(merged)
+    new = hops if hops else sides(merged)  # responders = puzzles the search itself improved (not public sources)
     # 1e-6 on the side: real moves only, not polish noise; biggest gain first
     gains = sorted(((best[n] - new[n]) / math.sqrt(n), n) for n in new if n in best and best[n] - new[n] > 1e-6)[::-1]
     known = [int(x) for x in open(listfile).read().replace(' ', '').split(',') if x] if os.path.exists(listfile) else []

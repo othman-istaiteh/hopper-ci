@@ -6,7 +6,7 @@ import base64, csv, datetime, io, json, os, re, subprocess, sys
 
 COMP = os.environ.get('KAGGLE_COMP') or base64.b64decode('c3F1YXJlcy1pbi1zcXVhcmVz').decode()
 MAX_PER_DAY = int(os.environ.get('KAGGLE_MAX_PER_DAY', '8'))
-MIN_GAIN = 1e-9
+MIN_GAIN = float(os.environ.get('KAGGLE_MIN_GAIN', '1e-5'))  # do not spend a submission on noise-level gains
 
 
 def sh(args):
