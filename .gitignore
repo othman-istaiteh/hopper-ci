@@ -1,5 +1,4 @@
-work/
-out/
-slices/
-evand/
 __pycache__/
+*.pyc
+hop/sq10.ipynb
+hop/sq10.b64
