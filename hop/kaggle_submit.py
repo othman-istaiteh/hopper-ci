@@ -33,7 +33,12 @@ def main():
         try: scores.append(float(r.get('publicScore') or 'nan'))
         except ValueError: pass
     best = min((s for s in scores if s == s), default=float('inf'))
-    pending = sum(1 for r in rows if not any(k in (r.get('status') or '').lower() for k in ('complete', 'error')))  # status looks like SubmissionStatus.COMPLETE
+    pending = 0
+    for r in rows:  # a pending submission has no score yet: use the certified total written in its description
+        if not any(k in (r.get('status') or '').lower() for k in ('complete', 'error')):
+            pending += 1
+            m = re.search(r'certified ([0-9.]+)', r.get('description') or '')
+            if m: best = min(best, float(m.group(1)))
     print(json.dumps(dict(certified_total=total, best_public=best, submissions_today=n_today, pending=pending)))
     if total > best - MIN_GAIN:
         print('not better than the best submission: not submitting'); return

@@ -11,6 +11,9 @@ on:
       fetch_kaggle:
         description: include the latest output of our merge notebook ("yes" / "no")
         default: "yes"
+      max_per_day:
+        description: daily cap for automatic submissions in this run (KAGGLE_MAX_PER_DAY)
+        default: "8"
 
 permissions:
   contents: write
@@ -59,6 +62,6 @@ jobs:
           if [ -n "$KAGGLE_KEY" ]; then
             mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
             export KAGGLE_API_TOKEN="$KAGGLE_KEY"
-            python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub on-demand merge ${{ github.run_number }} (${{ inputs.releases }})" | tee -a out/merge.log
+            KAGGLE_MAX_PER_DAY=${{ inputs.max_per_day }} python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub on-demand merge ${{ github.run_number }} (${{ inputs.releases }})" | tee -a out/merge.log
           fi
           gh release upload "$TAG" out/merge.log --clobber
