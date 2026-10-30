@@ -16,6 +16,9 @@ on:
       builder:
         description: mk_sq10 (hop notebook) or mk_sq12 (the certified merge notebook; args = maxc, e.g. "3")
         default: "mk_sq10"
+      add_sources:
+        description: comma-separated kernel slugs (owner/slug) to add as notebook inputs (kernel_sources) before pushing
+        default: ""
 
 jobs:
   push:
@@ -49,6 +52,11 @@ jobs:
           shutil.copy('hop/sq10.ipynb', 'push/sq10.ipynb')
           m['code_file'] = 'sq10.ipynb'; m['kernel_type'] = 'notebook'; m['language'] = 'python'
           m['enable_internet'] = True; m['enable_gpu'] = False; m['is_private'] = True
+          add = [x.strip() for x in "${{ inputs.add_sources }}".split(',') if x.strip()]
+          ks = m.get('kernel_sources') or []
+          for x in add:
+              if x not in ks: ks.append(x)
+          m['kernel_sources'] = ks
           json.dump(m, open('push/kernel-metadata.json', 'w'), indent=1)
           print(json.dumps(m, indent=1))
           PY
