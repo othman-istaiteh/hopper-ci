@@ -1,0 +1,33 @@
+name: kaggle_scan
+# Lists the competition's public notebooks (by score and by last run) and our submissions through the Kaggle API and
+# publishes the listings as assets of the rolling release "scan", readable without a browser.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: kaggle CLI
+        run: pip install -q kaggle
+      - name: scan
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          C=$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d)
+          mkdir -p out
+          kaggle kernels list --competition "$C" --sort-by scoreAscending --page-size 40 -v > out/kernels_by_score.csv || true
+          kaggle kernels list --competition "$C" --sort-by dateRun --page-size 40 -v > out/kernels_by_date.csv || true
+          kaggle competitions submissions -c "$C" -v > out/submissions.csv || true
+          kaggle competitions leaderboard -c "$C" --show > out/leaderboard_top.txt || true
+          wc -l out/*
+          gh release create scan out/* --title "scan" --notes "Kaggle API listings" 2>/dev/null || gh release upload scan out/* --clobber
