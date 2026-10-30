@@ -1,0 +1,80 @@
+name: relax
+# Relax design seeds (seeds_x/*.csv.gz, overlapping starts allowed) with fq, one job per engine, certify, publish release
+# relax-<run_number> (submission.csv holds the certified results, grid fillers elsewhere; merge_now can include the tag).
+on:
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: JSON list of engines, one job each (quench = fq quench from the overlapping start, shrink = fq --shrink --hops)
+        default: '["quench", "shrink"]'
+      hop_min:
+        description: minutes per candidate and seed
+        default: "3"
+      seeds:
+        description: seeds per candidate
+        default: "2"
+      hop_args:
+        description: fq options for every engine (empty = engine defaults)
+        default: ""
+      dir:
+        description: seed directory in the repository
+        default: "seeds_x"
+
+permissions:
+  contents: write
+
+jobs:
+  relax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: ${{ fromJson(inputs.engines) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build packer and fq
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock
+          cd search/packer && cargo build --release --bin fq --bin packer 2>&1 | tail -2
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: relax ${{ matrix.engine }}
+        run: |
+          mkdir -p out slices
+          for f in ${{ inputs.dir }}/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          ls slices
+          cd hop
+          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
+          PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
+          SQ_WORKERS=$(nproc) SQ_MAXC=40 SQ_DEDUP=0 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} HOP_SEED0=500 \
+          HOP_NTARGET=1000 HOP_BUDGET_H=4 FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" HOP_ENGINE=${{ matrix.engine }} \
+          python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/relax_${{ matrix.engine }}.log | tail -30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relax-${{ matrix.engine }}
+          path: out/
+
+  publish:
+    needs: relax
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: merge the engines and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p slices out
+          for d in parts/*/; do n=$(basename "$d"); mkdir -p "slices/$n"; cp "$d/submission.csv" "slices/$n/submission.csv"; cat "$d"/*.log > "out/$n.log"; done
+          cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+          cd $GITHUB_WORKSPACE
+          gh release create "relax-${{ github.run_number }}" out/submission.csv out/*.log --title "relax ${{ github.run_number }}" --notes "engines ${{ inputs.engines }}, ${{ inputs.dir }}"

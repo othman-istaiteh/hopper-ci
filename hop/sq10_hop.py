@@ -100,6 +100,10 @@ def hop_job(job):
                         f.write('%.17g %.17g %.15g\n' % (x, y, math.degrees(t) % 90.0))
                 subprocess.run([R.FQ, 'quench', '--in', inp, '--out', hp, '--seed', str(seed), '--deadline', str(int(minutes * 60))]
                                + (HOP_ARGS or (INSERT_DEFAULT if INSERT_K else REMOVE_DEFAULT)), capture_output=True, text=True, timeout=minutes * 60 + 600)
+            elif ENGINE == 'quench':
+                # plain fq quench from a possibly overlapping start (design seeds): HOP_ARGS = fq options, default --loosen 1.03
+                subprocess.run([R.FQ, 'quench', '--in', inp, '--out', hp, '--seed', str(seed), '--deadline', str(int(minutes * 60))]
+                               + (HOP_ARGS or INSERT_DEFAULT), capture_output=True, text=True, timeout=minutes * 60 + 600)
             elif ENGINE == 'shrink':
                 # fq shrink-hopping (SQUISH-style): grow to feasibility, shrink the side step by step, kick a few squares when a
                 # step fails; deterministic per seed, converges in minutes. HOP_ARGS: fq options (--hops, --hop-sigma, --hop-k, --loosen, --d0).
@@ -171,7 +175,7 @@ def main(out_path):
     for n in cands:
         seen = set(); keep = []
         for c in sorted(cands[n], key=lambda c: c[0]):
-            key = round(c[0], 9)
+            key = round(c[0], 9) if os.environ.get('SQ_DEDUP', '1') == '1' else len(keep)  # SQ_DEDUP=0: keep same-side variants
             if key not in seen and c[0] < R.GRID(n) - 1e-9:
                 seen.add(key); keep.append(c)
         cands[n] = keep[:maxc]
