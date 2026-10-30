@@ -28,7 +28,7 @@ def main():
         for n, s in sides(p).items():
             best[n] = min(best.get(n, 9e9), s)
     new = sides(merged)
-    gains = sorted(((best[n] - new[n]) / math.sqrt(n), n) for n in new if n in best and best[n] - new[n] > 1e-9)[::-1]
+    gains = sorted(((best[n] - new[n]) / math.sqrt(n), n) for n in new if n in best and best[n] - new[n] > 1e-6)  # 1e-6 on the side: real moves only, not polish noise[::-1]
     known = [int(x) for x in open(listfile).read().replace(' ', '').split(',') if x] if os.path.exists(listfile) else []
     added = [n for g, n in gains if n not in known]
     out = known + added
