@@ -77,3 +77,42 @@ jobs:
             echo "nothing beats our packings"
           fi
           gh release create "harvest-${{ github.run_number }}" out/merge.log --title "harvest ${{ github.run_number }}" --notes "public notebook outputs" || true
+
+  certs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: clone the certificate repositories (read only, sparse)
+        run: |
+          mkdir -p ext && cd ext
+          sp() { git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$1.git" "$2" && (cd "$2" && git sparse-checkout set --no-cone $3) || echo "clone $1 failed"; }
+          sp evand/square-packing evand "/search/packer/candidates/ /certificates/"
+          sp Mishapolk/square-packing-records mishapolk "/certificates/"
+          sp franciscouzo/square-packing couzo "/certificates/"
+          sp dostashev/square-packing ostashev "/"
+          sp itsnaka/squish-certs itsnaka "/"
+          sp wand125/square-packing wand125 "/"
+          sp griffcass/square-packing griffcass "/"
+          sp jlevy/squares jlevy "/packing/"
+          du -sh . ; find . -name "*.cert" | wc -l
+      - name: our current best
+        run: |
+          mkdir -p ours slices out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          cd hop && python3 best_merge.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/ours/best.csv
+      - name: certificates below our sides
+        run: |
+          cd hop && python3 -I certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/certs.csv $GITHUB_WORKSPACE/ext | tee $GITHUB_WORKSPACE/out/certs.log | tail -12
+      - name: commit
+        run: |
+          if [ -s out/certs.csv ] && [ "$(wc -l < out/certs.csv)" -gt 1 ]; then
+            gzip -9 -c out/certs.csv > "results/certs_$(date +%m%d).csv.gz"
+            git config user.name "harvest bot" && git config user.email "harvest@users.noreply.github.com"
+            git add results/ && git commit -q -m "results: certificate harvest $(date +%F)" || true
+            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+          else
+            echo "no certificate beats our packings"
+          fi
