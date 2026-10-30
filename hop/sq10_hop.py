@@ -6,10 +6,15 @@
 import os, sys, csv, math, json, glob, time, subprocess, re
 import numpy as np
 from multiprocessing import Pool
+from multiprocessing.pool import ThreadPool
+# SQ_THREADS=1: threads instead of processes (the work is in subprocesses anyway); avoids the process pool on macOS,
+# where the parent died silently after the first result in two runs (29 Oct)
+PoolCls = ThreadPool if os.environ.get('SQ_THREADS') == '1' else Pool
 import sq09_requench as R
 
 PACKER = os.environ.get('PACKER_BIN', '/kaggle/working/evand/search/packer/target/release/packer')
 WORK = os.environ.get('SQ_WORK', '/kaggle/working/hop')
+HOP_ARGS = os.environ.get('HOP_ARGS', '').split()  # extra packer hop options, e.g. '--descend 3e-5 --amp 0.7' (defaults 1e-4, 1.0)
 
 
 def hop_job(job):
@@ -23,7 +28,7 @@ def hop_job(job):
         inp = os.path.join(d, 'in.txt'); s0 = R.to_fq(a, inp)
         hp = os.path.join(d, 'hop.txt')
         try:
-            subprocess.run([PACKER, 'hop', '--in', inp, '--s', '%.17g' % s0, '--seed', str(seed), '--iters', '100000000', '--out', hp, '--quiet'],
+            subprocess.run([PACKER, 'hop', '--in', inp, '--s', '%.17g' % s0, '--seed', str(seed), '--iters', '100000000', '--out', hp, '--quiet'] + HOP_ARGS,
                            capture_output=True, text=True, timeout=minutes * 60)
         except subprocess.TimeoutExpired:
             pass
@@ -104,7 +109,7 @@ def main(out_path):
     print(f'{len(jobs)} hop jobs x {minutes:.1f} min on {workers} workers: about {len(jobs) * minutes / workers / 60:.1f} h; packer={os.path.exists(PACKER)} fq={os.path.exists(R.FQ)}', flush=True)
     nh = 0; errs = 0; imp = {}
     if os.path.exists(PACKER):
-        with Pool(workers) as pool:
+        with PoolCls(workers) as pool:
             for k, (n, out, err) in enumerate(pool.imap_unordered(hop_job, jobs, chunksize=1)):
                 if err:
                     errs += 1
@@ -117,7 +122,7 @@ def main(out_path):
                     print(f'hopped {k}/{len(jobs)} jobs, {nh} outputs, {len(imp)} puzzles improved (approx), {time.time() - t0:.0f}s', flush=True)
     print(f'hop stage done: {nh} outputs, {errs} errors, {len(imp)} puzzles improved (approx), {time.time() - t0:.0f}s', flush=True)
     best = {}; fails = []
-    with Pool(workers) as pool:
+    with PoolCls(workers) as pool:
         cj = [(n, cands[n]) for n in sorted(cands, key=lambda n: -n)]
         for n, L, tag, rs, log in pool.imap_unordered(R.certify, cj, chunksize=1):
             if log: fails.append((n, log))
