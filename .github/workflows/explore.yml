@@ -1,0 +1,128 @@
+name: explore
+# Basin-explorer campaign for the Kaggle "Squares in Squares" competition (team Mais Oui): one puzzle per job.
+# Each matrix job fetches Evan Daniel's search/packer (MIT, github.com/evand/square-packing, pinned commit), builds his
+# `fq` quench and `anneal` engines, and runs his breadth-first basin explorer (explore.py: MAP-Elites archive of
+# polished minima, kick / crossover / anneal moves, polish gated near the best) from OUR best packing of that puzzle for
+# `minutes`. hop/explore_run.py harvests the archive, certifies the best minima with the metric copy and uploads a
+# one-puzzle CSV plus a summary. The final job merges every slice with the seeds (certified, no re-quench) and publishes
+# the result as a release asset (downloaded by our Kaggle merge notebook).
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: comma-separated puzzle sizes n, one job each (at most 20 run at a time)
+        default: "911,910,971,972,498,593,544,453,803,592,791,747,848,973,545,908,969,591,793,913"
+      minutes:
+        description: explorer wall budget per puzzle (minutes; the job limit is 355 incl. build and certification)
+        default: "280"
+      procs:
+        description: explorer worker processes per job (ubuntu-latest has 4 cores)
+        default: "4"
+      seed:
+        description: explorer seed
+        default: "1"
+      smax_above:
+        description: stepping-stone ceiling above our best side (explore.py --smax = best + this)
+        default: "0.05"
+      xargs:
+        description: extra explore.py arguments (e.g. "--reward value --cross2 3")
+        default: ""
+      evand_ref:
+        description: evand/square-packing commit to build and run
+        default: "0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d"
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          s = "${{ inputs.targets }}"
+          ns = sorted({int(x) for x in s.replace(' ', '').split(',') if x})
+          print("matrix=" + json.dumps({"n": ns}))
+          EOF
+
+  explore:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch the author's search/packer and build fq and anneal
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git sparse-checkout set --no-cone /search/packer/
+          git fetch -q --depth 1 --filter=blob:none origin ${{ inputs.evand_ref }} && git checkout -q FETCH_HEAD
+          git rev-parse HEAD
+          rm -f search/packer/.cargo/config.toml    # the author's file asks for -C target-cpu=native; build generic
+          cd search/packer && cargo build --release --bin fq --bin anneal 2>&1 | tail -2
+          [ -x target/release/anneal ] || echo "WARNING: anneal did not build; the explorer's ashallow proposals will fail"
+          [ -x target/release/fq ] || cargo build --release --bin fq 2>&1 | tail -3
+          ls -la target/release/fq target/release/anneal || ls -la target/release/fq
+      - name: python deps
+        run: |
+          pip install -q numpy scipy mpmath
+          python3 evand/search/packer/explore.py --help > /dev/null && echo "explore.py imports resolve"
+      - name: explore n=${{ matrix.n }}
+        run: |
+          mkdir -p out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds/$n"; gunzip -c "$f" > "seeds/$n/submission.csv"; done
+          ls seeds
+          cd hop
+          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
+          EX_PACKER=$GITHUB_WORKSPACE/evand/search/packer \
+          SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work \
+          EX_N=${{ matrix.n }} EX_MINUTES=${{ inputs.minutes }} EX_PROCS=${{ inputs.procs }} EX_SEED=${{ inputs.seed }} \
+          EX_SMAX_ABOVE=${{ inputs.smax_above }} EX_XARGS="${{ inputs.xargs }}" \
+          python3 -u explore_run.py $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/summary.json
+      - name: collect the run's report and archive log
+        if: always()
+        run: |
+          W=work/ex${{ matrix.n }}
+          for f in report.txt archive.jsonl log.txt manifest.json best0.txt best1.txt best2.txt; do [ -f "$W/$f" ] && cp "$W/$f" out/ || true; done
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: explore-${{ matrix.n }}
+          path: out/
+          retention-days: 7
+
+  merge:
+    needs: explore
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: slices
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certified merge of the slices and the seeds
+        run: |
+          mkdir -p out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          ls slices
+          for f in slices/explore-*/summary.json; do [ -f "$f" ] && cat "$f" && echo; done || true
+          cd hop
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tail -20
+      - name: publish as release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=explore-${{ github.run_number }}
+          gh release create "$TAG" out/submission.csv --title "explore run ${{ github.run_number }}" --notes "certified merge of explore run ${{ github.run_id }}" --latest
+          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"
