@@ -35,7 +35,7 @@ on:
         description: lowest puzzle size to hop (SQ_NMIN)
         default: "1"
       engine:
-        description: hop = packer hop; shrink = fq --shrink --hops (HOP_ARGS then holds fq options); hhop = packer hhop (hard-square event-chain hopping); insert / insert2 = upward neighbour transfer (our n-1 / n-2 packing plus inserted squares, fq quench; HOP_ARGS = fq options, default --loosen 1.03)
+        description: hop = packer hop; shrink = fq --shrink --hops (HOP_ARGS then holds fq options); hhop = packer hhop (hard-square event-chain hopping); insert / insert2 = upward neighbour transfer (our n-1 / n-2 packing plus inserted squares, fq quench, HOP_ARGS = fq options, default --loosen 1.03); remove / remove2 = downward transfer (our n+1 / n+2 packing minus wall squares, default --loosen 1.0)
         default: "hop"
       target_frac:
         description: target-side hop (engine hop only) - start the walk this fraction of the way from our side to the board side (0 = classic)

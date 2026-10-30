@@ -24,6 +24,12 @@ TARGET = {}  # n -> board side, filled in main() from SQ_BOARD
 # design family instead of our (worse) family for n. HOP_ARGS then holds fq options (default --loosen 1.03).
 INSERT_K = int(ENGINE[6:] or '1') if ENGINE.startswith('insert') else 0
 INSERT_DEFAULT = ['--loosen', '1.03']
+# engine 'remove' / 'remove2': downward transfer. The donor is our packing of n + k (e.g. a responder that just improved), k
+# squares near the walls are removed (the seed picks which) and fq quench shrinks the box. HOP_ARGS = fq options (default
+# --loosen 1.0). XFER_K = donor offset: the donor of target n is n - XFER_K.
+REMOVE_K = int(ENGINE[6:] or '1') if ENGINE.startswith('remove') else 0
+REMOVE_DEFAULT = ['--loosen', '1.0']
+XFER_K = INSERT_K - REMOVE_K
 
 
 def clearance_points(a, s, kmax=6, step=0.1):
@@ -42,6 +48,16 @@ def clearance_points(a, s, kmax=6, step=0.1):
             if len(pts) >= kmax:
                 break
     return pts
+
+
+def remove_squares(a, s, k, seed):
+    """drop k of the 12 squares nearest to a wall (the side can only shrink where the walls are touched); the seed picks them"""
+    d = np.minimum(np.minimum(a[:, 0], a[:, 1]), np.minimum(s - a[:, 0], s - a[:, 1]))
+    order = list(np.argsort(d)[:12])
+    drop = set()
+    for j in range(k):
+        drop.add(int(order[(seed + 5 * j) % len(order)]))
+    return a[[i for i in range(len(a)) if i not in drop]]
 
 
 def insert_squares(a, s, k, seed):
@@ -72,16 +88,18 @@ def hop_job(job):
         inp = os.path.join(d, 'in.txt'); s0 = R.to_fq(a, inp)
         hp = os.path.join(d, 'hop.txt')
         try:
-            if INSERT_K:
-                # upward neighbour transfer: the donor (n - k squares) gets k inserted squares, fq quench absorbs the overlap
+            if XFER_K:
+                # neighbour transfer: the donor (n - XFER_K squares) gets squares inserted (XFER_K > 0, fq absorbs the overlap)
+                # or removed (XFER_K < 0, fq shrinks the box); the output has n squares
                 h = 0.5 * (np.abs(np.cos(a[:, 2])) + np.abs(np.sin(a[:, 2])))
-                a2 = insert_squares(a - [(a[:, 0] - h).min(), (a[:, 1] - h).min(), 0.0], s0, INSERT_K, seed)
+                a0 = a - [(a[:, 0] - h).min(), (a[:, 1] - h).min(), 0.0]
+                a2 = insert_squares(a0, s0, INSERT_K, seed) if INSERT_K else remove_squares(a0, s0, REMOVE_K, seed)
                 with open(inp, 'w') as f:
                     f.write('%d %.17g\n' % (len(a2), s0))
                     for x, y, t in a2:
                         f.write('%.17g %.17g %.15g\n' % (x, y, math.degrees(t) % 90.0))
                 subprocess.run([R.FQ, 'quench', '--in', inp, '--out', hp, '--seed', str(seed), '--deadline', str(int(minutes * 60))]
-                               + (HOP_ARGS or INSERT_DEFAULT), capture_output=True, text=True, timeout=minutes * 60 + 600)
+                               + (HOP_ARGS or (INSERT_DEFAULT if INSERT_K else REMOVE_DEFAULT)), capture_output=True, text=True, timeout=minutes * 60 + 600)
             elif ENGINE == 'shrink':
                 # fq shrink-hopping (SQUISH-style): grow to feasibility, shrink the side step by step, kick a few squares when a
                 # step fails; deterministic per seed, converges in minutes. HOP_ARGS: fq options (--hops, --hop-sigma, --hop-k, --loosen, --d0).
@@ -170,20 +188,20 @@ def main(out_path):
     nlist = [int(x) for x in os.environ.get('HOP_NLIST', '').replace(' ', '').split(',') if x]
     if nlist:  # explicit target list (e.g. the puzzles that keep yielding), in the given order, instead of the gap ranking
         targets = [n for n in nlist if n in cands]
-    if INSERT_K:
-        # upward transfer pairs: target n whose donor n - k is at least HOP_INSERT_MINGAP (side) closer to the board than n is
+    if XFER_K:
+        # transfer pairs: target n whose donor n - XFER_K is at least HOP_INSERT_MINGAP (side) closer to the board than n is
         gp = lambda n: cands[n][0][0] - board.get(n, cands[n][0][0])
         mg = float(os.environ.get('HOP_INSERT_MINGAP', '5e-3'))
-        pairs = sorted(((gp(n) - gp(n - INSERT_K)) / math.sqrt(n), n) for n in cands
-                       if nmin <= n <= nmax and n - INSERT_K in cands and gp(n) - gp(n - INSERT_K) > mg)[::-1]
-        targets = [n for n in nlist if n in cands and n - INSERT_K in cands] if nlist else [n for g, n in pairs]
-        print(f'insert{INSERT_K}: {len(pairs)} donor pairs (donor gap + {mg} < target gap), '
-              + ' '.join('%d:%.4f>%.4f' % (n, gp(n - INSERT_K), gp(n)) for g, n in pairs[:30]), flush=True)
+        pairs = sorted(((gp(n) - gp(n - XFER_K)) / math.sqrt(n), n) for n in cands
+                       if nmin <= n <= nmax and n - XFER_K in cands and gp(n) - gp(n - XFER_K) > mg)[::-1]
+        targets = [n for n in nlist if n in cands and n - XFER_K in cands] if nlist else [n for g, n in pairs]
+        print(f'{ENGINE}: {len(pairs)} donor pairs (donor gap + {mg} < target gap), '
+              + ' '.join('%d:%.4f>%.4f' % (n, gp(n - XFER_K), gp(n)) for g, n in pairs[:30]), flush=True)
     targets = targets[skip:skip + ntarget]
     print(f'targets {len(targets)} (of {len(cands)} non-grid puzzles), total gap to board {sum(g for g, n in gaps if g > 0):.5f}', flush=True)
     jobs = []
     for n in targets:
-        for ci, (aL, tag, rs) in enumerate(cands[n - INSERT_K] if INSERT_K else cands[n]):
+        for ci, (aL, tag, rs) in enumerate(cands[n - XFER_K] if XFER_K else cands[n]):
             for sd in range(seeds):
                 jobs.append((n, tag, rs, seed0 + 10 * ci + sd, minutes))
     workers = int(os.environ.get('SQ_WORKERS', str(os.cpu_count() or 4)))
