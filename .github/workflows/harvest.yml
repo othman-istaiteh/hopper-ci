@@ -55,6 +55,21 @@ jobs:
             echo "  $r: $k submission files"
             rm -rf "$d"
           done
+          # public datasets (searched by competition keywords, newest first, at most 20, each at most 300 MB)
+          j=0
+          for q in "squares in squares" "square packing"; do
+            kaggle datasets list --search "$q" --sort-by updated --max-size 300000000 --csv 2>/dev/null | tail -n +2 | cut -d, -f1 | head -10
+          done | sort -u | grep / | head -20 > dsets.txt || true
+          for ds in $(cat dsets.txt); do
+            j=$((j+1)); d="pub/ds_$j"; mkdir -p "$d"
+            timeout 600 kaggle datasets download "$ds" -p "$d" --unzip > /dev/null 2>&1 || { echo "  dataset $ds: download failed"; rm -rf "$d"; continue; }
+            k=0
+            for f in $(find "$d" -type f -name '*.csv' -size +100k); do
+              if head -1 "$f" | grep -q "square_id"; then k=$((k+1)); mkdir -p "pubs/ds${j}_$k"; cp "$f" "pubs/ds${j}_$k/submission.csv"; fi
+            done
+            echo "  dataset $ds: $k submission files"
+            rm -rf "$d"
+          done
           mkdir -p ours
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
           # keep only the public puzzles that beat ours (memory: dozens of full submissions killed the merge on 31 Oct)
