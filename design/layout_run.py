@@ -76,6 +76,8 @@ def main():
         tries += 1
         g = mutate(g, rng) if rng.random() < 0.5 else (g[0] + [g[0][-1]], g[1] + [g[1][-1]])
         f, p = layout.s_hyb(g, a.n, k, tmp)
+        if tries % 10 == 0:
+            print(f'  grow {tries}: s={f:.5f} rows {len(g[0])}+{len(g[1])}', flush=True)
     best = f
     if p:
         shutil.copy(p, f'{a.out}.best.txt')

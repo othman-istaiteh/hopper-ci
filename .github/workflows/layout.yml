@@ -35,6 +35,7 @@ jobs:
           cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d
           git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock "/search/packer/*.py"
           cd search/packer && cargo build --release --bin fq --bin packer 2>&1 | tail -2
+          ls target/release/packer target/release/fq
       - name: python deps
         run: pip install -q numpy mpmath
       - name: search ${{ matrix.task }}
@@ -44,7 +45,9 @@ jobs:
           mkdir -p out slices
           EVAND_PACKER=$GITHUB_WORKSPACE/evand/search/packer timeout $(( ${{ inputs.minutes }} * 60 + 900 )) \
           python3 -u design/layout_run.py --n $N --seed $S --extra $E --dw ${DW:-0} --time $(( ${{ inputs.minutes }} * 60 )) \
-            --out out/$TAG | tee out/$TAG.log | grep -v "^  it=" | tail -40
+            --out out/$TAG 2>&1 | tee out/$TAG.log | grep -v "^  it=" | tail -40
+          ls -la evand/search/packer/target/release/packer evand/search/packer/target/release/fq || echo "::error::packer or fq missing"
+          echo "::notice title=$TAG::$(grep -v '^  it=' out/$TAG.log | tail -4 | tr '\n' ' ' | cut -c1-900)"
       - name: polish the best layout
         run: |
           [ -f out/$TAG.csv ] || { echo "no layout reached n"; exit 0; }
@@ -94,4 +97,5 @@ jobs:
           else
             echo "no layout beats our packings"
           fi
-          gh release create "layout-${{ github.run_number }}" out/summary.txt out/merge.log out/l*.log --title "layout ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}, ${{ inputs.minutes }} min" || true
+          gh release create "layout-${{ github.run_number }}" out/summary.txt out/merge.log out/l*.log --title "layout ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}, ${{ inputs.minutes }} min" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
+          echo "::notice title=summary::$(cat out/summary.txt | tr '\n' ' ' | cut -c1-900) | $(tail -3 out/merge.log | tr '\n' ' ' | cut -c1-300)"
