@@ -12,7 +12,7 @@ on:
         description: how many notebooks from each listing when refs is empty
         default: "15"
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 */6 * * *"
 
 permissions:
   contents: write
