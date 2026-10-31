@@ -1,128 +1,103 @@
 name: explore
-# Basin-explorer campaign on our unit-square packings: one puzzle per job.
-# Each matrix job fetches Evan Daniel's search/packer (MIT, github.com/evand/square-packing, pinned commit), builds his
-# `fq` quench and `anneal` engines, and runs his breadth-first basin explorer (explore.py: MAP-Elites archive of
-# polished minima, kick / crossover / anneal moves, polish gated near the best) from OUR best packing of that puzzle for
-# `minutes`. hop/explore_run.py harvests the archive, certifies the best minima with the metric copy and uploads a
-# one-puzzle CSV plus a summary. The final job merges every slice with the seeds (certified, no re-quench) and publishes
-# the result as a release asset (downloaded by our Kaggle merge notebook).
+# Evan Daniel's basin explorer (explore.py: quality-diversity over polished fq minima, kicks / melts / crossovers) started
+# from our current packing of each puzzle. One job per task = comma-separated puzzle list, run one after the other.
+# Basins below our side are certified in the publish job; the winners are committed as results/explore_<date>_<run>.csv.gz
+# (every later merge picks them up). Release explore-<run_number>.
 on:
   workflow_dispatch:
     inputs:
-      targets:
-        description: comma-separated puzzle sizes n, one job each (at most 20 run at a time)
-        default: "911,910,971,972,498,593,544,453,803,592,791,747,848,973,545,908,969,591,793,913"
+      tasks:
+        description: JSON list of comma-separated puzzle lists, one job each
+        default: '["299,335,412", "454,498,544"]'
       minutes:
-        description: explorer wall budget per puzzle (minutes; the job limit is 355 incl. build and certification)
-        default: "280"
-      procs:
-        description: explorer worker processes per job (ubuntu-latest has 4 cores)
-        default: "4"
-      seed:
-        description: explorer seed
-        default: "1"
-      smax_above:
-        description: stepping-stone ceiling above our best side (explore.py --smax = best + this)
-        default: "0.05"
-      xargs:
-        description: extra explore.py arguments (e.g. "--reward value --cross2 3")
-        default: ""
-      evand_ref:
-        description: evand/square-packing commit to build and run
-        default: "0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d"
+        description: explorer minutes per puzzle
+        default: "100"
+      smax:
+        description: stepping-stone ceiling above our side
+        default: "0.02"
 
 permissions:
   contents: write
 
 jobs:
-  plan:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.m.outputs.matrix }}
-    steps:
-      - id: m
-        run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import json
-          s = "${{ inputs.targets }}"
-          ns = sorted({int(x) for x in s.replace(' ', '').split(',') if x})
-          print("matrix=" + json.dumps({"n": ns}))
-          EOF
-
   explore:
-    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 355
     strategy:
       fail-fast: false
-      max-parallel: 20
-      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+      matrix:
+        task: ${{ fromJson(inputs.tasks) }}
     steps:
       - uses: actions/checkout@v4
-      - name: fetch the author's search/packer and build fq and anneal
+      - name: build fq, packer, anneal (evand, pinned)
         run: |
-          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
-          cd evand && git sparse-checkout set --no-cone /search/packer/
-          git fetch -q --depth 1 --filter=blob:none origin ${{ inputs.evand_ref }} && git checkout -q FETCH_HEAD
-          git rev-parse HEAD
-          rm -f search/packer/.cargo/config.toml    # the author's file asks for -C target-cpu=native; build generic
-          cd search/packer && cargo build --release --bin fq --bin anneal 2>&1 | tail -2
-          [ -x target/release/anneal ] || echo "WARNING: anneal did not build; the explorer's ashallow proposals will fail"
-          [ -x target/release/fq ] || cargo build --release --bin fq 2>&1 | tail -3
-          ls -la target/release/fq target/release/anneal || ls -la target/release/fq
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d
+          git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock "/search/packer/*.py" /search/packer/pk/
+          cd search/packer && cargo build --release --bin fq --bin packer --bin anneal 2>&1 | tail -2
+          ls target/release/fq target/release/packer target/release/anneal
       - name: python deps
+        run: pip install -q numpy mpmath
+      - name: our current best
         run: |
-          pip install -q numpy scipy mpmath
-          python3 evand/search/packer/explore.py --help > /dev/null && echo "explore.py imports resolve"
-      - name: explore n=${{ matrix.n }}
+          mkdir -p slices ours
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          cd hop && python3 best_merge.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/ours/best.csv | tail -2
+      - name: explore ${{ matrix.task }}
+        env:
+          EVAND_PACKER: ${{ github.workspace }}/evand/search/packer
         run: |
-          mkdir -p out
-          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds/$n"; gunzip -c "$f" > "seeds/$n/submission.csv"; done
-          ls seeds
-          cd hop
-          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
-          EX_PACKER=$GITHUB_WORKSPACE/evand/search/packer \
-          SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work \
-          EX_N=${{ matrix.n }} EX_MINUTES=${{ inputs.minutes }} EX_PROCS=${{ inputs.procs }} EX_SEED=${{ inputs.seed }} \
-          EX_SMAX_ABOVE=${{ inputs.smax_above }} EX_XARGS="${{ inputs.xargs }}" \
-          python3 -u explore_run.py $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/summary.json
-      - name: collect the run's report and archive log
-        if: always()
-        run: |
-          W=work/ex${{ matrix.n }}
-          for f in report.txt archive.jsonl log.txt manifest.json best0.txt best1.txt best2.txt; do [ -f "$W/$f" ] && cp "$W/$f" out/ || true; done
-          ls -la out
+          mkdir -p out/x
+          TAG="x$(echo '${{ matrix.task }}' | tr ',' '_')"; echo "TAG=$TAG" >> $GITHUB_ENV
+          for n in $(echo "${{ matrix.task }}" | tr ',' ' '); do
+            S=$(python3 design/ex_io.py start ours/best.csv $n start_$n.txt)
+            SMAX=$(python3 -c "print($S + ${{ inputs.smax }})")
+            (cd $EVAND_PACKER && timeout $(( ${{ inputs.minutes }} * 60 + 600 )) python3 -u explore.py --n $n --starts $GITHUB_WORKSPACE/start_$n.txt \
+               --minutes ${{ inputs.minutes }} --procs $(nproc) --smax $SMAX --seed $n --out $GITHUB_WORKSPACE/runs/$n > $GITHUB_WORKSPACE/out/ex_$n.log 2>&1 || true)
+            (cd $EVAND_PACKER && python3 explore.py --report $GITHUB_WORKSPACE/runs/$n 2>&1 | head -3 >> $GITHUB_WORKSPACE/out/ex_$n.log || true)
+            R=$(python3 design/ex_io.py basins runs/$n $n $S out/x)
+            echo "$n ours $S: $R" | tee -a out/summary_$TAG.txt
+            echo "::notice title=explore $n::ours $S, $R, $(grep -c '^ ' out/ex_$n.log) log lines"
+          done
+          mv out/x/*.csv out/ 2>/dev/null || true
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: explore-${{ matrix.n }}
+          name: ${{ env.TAG }}
           path: out/
-          retention-days: 7
 
-  merge:
+  publish:
     needs: explore
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          path: slices
+          path: parts
       - name: python deps
         run: pip install -q numpy mpmath
-      - name: certified merge of the slices and the seeds
-        run: |
-          mkdir -p out
-          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
-          ls slices
-          for f in slices/explore-*/summary.json; do [ -f "$f" ] && cat "$f" && echo; done || true
-          cd hop
-          SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
-          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tail -20
-      - name: publish as release asset
+      - name: certify, keep the improvements, publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=explore-${{ github.run_number }}
-          gh release create "$TAG" out/submission.csv --title "explore run ${{ github.run_number }}" --notes "certified merge of explore run ${{ github.run_id }}" --latest
-          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"
+          mkdir -p slices out ours
+          cat parts/*/summary_*.txt > out/summary.txt 2>/dev/null || true
+          for d in parts/*/; do cp "$d"/ex_*.log out/ 2>/dev/null || true
+            for f in "$d"/*.csv; do [ -f "$f" ] || continue; t=$(basename "$f" .csv); mkdir -p "slices/$t"; cp "$f" "slices/$t/submission.csv"; done
+          done
+          ls slices | head -40
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            gzip -9 -c out/improved.csv > "results/explore_$(date +%m%d)_${{ github.run_number }}.csv.gz"
+            git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add results/ && git commit -q -m "results: explorer ${{ github.run_number }}" || true
+            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            echo "::notice title=improved::$(tail -3 out/merge.log | tr '\n' ' ' | cut -c1-500)"
+          else
+            echo "::notice title=improved::none"
+          fi
+          echo "::notice title=summary::$(tr '\n' ' ' < out/summary.txt | cut -c1-900)"
+          gh release create "explore-${{ github.run_number }}" out/summary.txt out/merge.log out/ex_*.log --title "explore ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}, ${{ inputs.minutes }} min per puzzle" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
