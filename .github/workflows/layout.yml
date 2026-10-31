@@ -1,0 +1,97 @@
+name: layout
+# Genome search over two-channel layouts (design/layout_run.py, Evan Daniel's layout.py family) for the 0.794 family.
+# One job per task "n:seed:extra[:dw]"; each squeezes its best layout with packer, polishes it with fq quench + packer
+# hop at temp 1.0 (sq10 quenchhop), and the publish job certifies everything, commits the puzzles that beat ours as
+# results/layout_<date>_<run>.csv.gz (every later merge picks them up) and publishes release layout-<run_number>.
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: JSON list of "n:seed:extra[:dw]" (extra = rows added to each channel of the decoded 176 genome)
+        default: '["299:1:2", "299:2:3", "335:1:2", "412:1:3"]'
+      minutes:
+        description: search minutes per task
+        default: "270"
+      polish_min:
+        description: quenchhop minutes on the best layout
+        default: "15"
+
+permissions:
+  contents: write
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJson(inputs.tasks) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build packer and fq (evand, pinned)
+        run: |
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d
+          git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock "/search/packer/*.py"
+          cd search/packer && cargo build --release --bin fq --bin packer 2>&1 | tail -2
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: search ${{ matrix.task }}
+        run: |
+          IFS=: read N S E DW <<< "${{ matrix.task }}"
+          TAG="l${N}_${S}_${E}_${DW:-0}"; echo "TAG=$TAG" >> $GITHUB_ENV
+          mkdir -p out slices
+          EVAND_PACKER=$GITHUB_WORKSPACE/evand/search/packer timeout $(( ${{ inputs.minutes }} * 60 + 900 )) \
+          python3 -u design/layout_run.py --n $N --seed $S --extra $E --dw ${DW:-0} --time $(( ${{ inputs.minutes }} * 60 )) \
+            --out out/$TAG | tee out/$TAG.log | grep -v "^  it=" | tail -40
+      - name: polish the best layout
+        run: |
+          [ -f out/$TAG.csv ] || { echo "no layout reached n"; exit 0; }
+          mkdir -p slices/$TAG && cp out/$TAG.csv slices/$TAG/submission.csv
+          cd hop
+          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
+          PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
+          SQ_WORKERS=$(nproc) SQ_MAXC=40 SQ_DEDUP=0 HOP_MIN=${{ inputs.polish_min }} HOP_SEEDS=1 HOP_SEED0=700 \
+          HOP_NTARGET=1000 HOP_BUDGET_H=1 FQ_DEADLINE=180 HOP_ENGINE=quenchhop \
+          python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/polished.csv | grep -v "^SIDES" | tee -a $GITHUB_WORKSPACE/out/$TAG.log | tail -12
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TAG }}
+          path: out/
+
+  publish:
+    needs: search
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certify, keep the improvements, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p slices out ours
+          for d in parts/*/; do t=$(basename "$d"); cat "$d"/*.log > "out/$t.log" 2>/dev/null || true
+            for f in "$d"/*.csv; do [ -f "$f" ] || continue; mkdir -p "slices/${t}_$(basename "$f" .csv)"; cp "$f" "slices/${t}_$(basename "$f" .csv)/submission.csv"; done
+          done
+          ls slices
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          grep -h "^done\|init s=" out/l*.log | tee out/summary.txt || true
+          if [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            gzip -9 -c out/improved.csv > "results/layout_$(date +%m%d)_${{ github.run_number }}.csv.gz"
+            git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add results/ && git commit -q -m "results: layout search ${{ github.run_number }}" || true
+            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+          else
+            echo "no layout beats our packings"
+          fi
+          gh release create "layout-${{ github.run_number }}" out/summary.txt out/merge.log out/l*.log --title "layout ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}, ${{ inputs.minutes }} min" || true
