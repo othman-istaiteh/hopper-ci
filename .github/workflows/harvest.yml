@@ -35,7 +35,7 @@ jobs:
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
           COMP=$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d)
-          mkdir -p pub slices out
+          mkdir -p pub pubs slices out
           if [ -z "$REFS" ]; then
             T=${TOP:-15}
             kaggle kernels list --competition "$COMP" --sort-by dateRun --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 > refs.txt
@@ -50,13 +50,16 @@ jobs:
             timeout 600 kaggle kernels output "$r" -p "$d" > /dev/null 2>&1 || { echo "  $r: no output"; continue; }
             k=0
             for f in $(find "$d" -type f -name '*.csv' -size +100k); do
-              if head -1 "$f" | grep -q "square_id"; then k=$((k+1)); mkdir -p "slices/pub${i}_$k"; cp "$f" "slices/pub${i}_$k/submission.csv"; fi
+              if head -1 "$f" | grep -q "square_id"; then k=$((k+1)); mkdir -p "pubs/pub${i}_$k"; cp "$f" "pubs/pub${i}_$k/submission.csv"; fi
             done
             echo "  $r: $k submission files"
             rm -rf "$d"
           done
           mkdir -p ours
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          # keep only the public puzzles that beat ours (memory: dozens of full submissions killed the merge on 31 Oct)
+          mkdir -p pubs && (cd hop && python3 prefilter.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/pubs)
+          for d in pubs/*/; do [ -d "$d" ] && mv "$d" slices/; done
           ls slices | wc -l
       - name: certified merge and keep the improvements
         run: |
