@@ -44,6 +44,9 @@ jobs:
             mkdir -p slices/kaggle_merge
             kaggle kernels output "$KAGGLE_USERNAME/notebook5586544269" -p slices/kaggle_merge || echo "Kaggle output fetch failed"
             find slices/kaggle_merge -type f ! -name submission.csv -delete || true
+            # Colab worker results (private dataset <user>/sq-colab-hop, one CSV of improved puzzles per round)
+            mkdir -p colab_dl && kaggle datasets download "$KAGGLE_USERNAME/sq-colab-hop" -p colab_dl --unzip -q 2>/dev/null || echo "no Colab dataset"
+            for g in colab_dl/colab_*.csv; do [ -f "$g" ] || continue; n=$(basename "$g" .csv); mkdir -p "slices/$n"; cp "$g" "slices/$n/submission.csv"; done
           fi
           ls slices
       - name: certified merge
