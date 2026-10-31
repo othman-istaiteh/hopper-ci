@@ -15,9 +15,13 @@ on:
       smax:
         description: stepping-stone ceiling above our side
         default: "0.02"
+      queue:
+        description: JSON list of further tasks; the publish job dispatches the next 2 of them with the same settings
+        default: '[]'
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   explore:
@@ -101,3 +105,14 @@ jobs:
           fi
           echo "::notice title=summary::$(tr '\n' ' ' < out/summary.txt | cut -c1-900)"
           gh release create "explore-${{ github.run_number }}" out/summary.txt out/merge.log out/ex_*.log --title "explore ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}, ${{ inputs.minutes }} min per puzzle" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
+      - name: next tasks from the queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE: ${{ inputs.queue }}
+        run: |
+          T=$(python3 -c "import json,os; q=json.loads(os.environ['QUEUE'] or '[]'); print(json.dumps(q[:2]))")
+          Q=$(python3 -c "import json,os; q=json.loads(os.environ['QUEUE'] or '[]'); print(json.dumps(q[2:]))")
+          if [ "$T" != "[]" ]; then
+            gh workflow run explore.yml -f tasks="$T" -f queue="$Q" -f minutes=${{ inputs.minutes }} -f smax=${{ inputs.smax }}
+            echo "::notice title=chain::next $T, queue $Q"
+          fi
