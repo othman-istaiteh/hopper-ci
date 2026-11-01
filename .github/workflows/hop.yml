@@ -60,11 +60,17 @@ jobs:
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: hop/max_jobs.txt
+          sparse-checkout-cone-mode: false
       - id: m
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import json, os
           n = int("${{ inputs.jobs }}")
+          if os.path.exists("hop/max_jobs.txt"):
+              n = min(n, int(open("hop/max_jobs.txt").read()))   # cap shared with the explorer (12-job budget)
           print("matrix=" + json.dumps({"slice": list(range(n))}))
           EOF
 
@@ -92,7 +98,7 @@ jobs:
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds/$n"; gunzip -c "$f" > "seeds/$n/submission.csv"; done
           ls seeds
           cd hop
-          J=${{ inputs.jobs }}; T=${{ inputs.targets }}; S=${{ matrix.slice }}
+          J=${{ inputs.jobs }}; [ -f max_jobs.txt ] && [ "$(cat max_jobs.txt)" -lt "$J" ] && J=$(cat max_jobs.txt); T=${{ inputs.targets }}; S=${{ matrix.slice }}
           NLIST="${{ inputs.nlist }}"; if [ "$NLIST" = "auto" ]; then NLIST=$(cat soft_list.txt); L=$(echo "$NLIST" | tr ',' '\n' | grep -c .); T=$(( L - ${{ inputs.skip }} )); [ "$T" -gt "${{ inputs.targets }}" ] && T=${{ inputs.targets }}; echo "auto list of $L puzzles, this run: $T after skip ${{ inputs.skip }}"; fi
           PER=$(( (T + J - 1) / J )); SKIP=$(( ${{ inputs.skip }} + S * PER ))
           echo "slice $S: targets $SKIP .. $((SKIP + PER))"

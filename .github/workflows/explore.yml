@@ -16,8 +16,14 @@ on:
         description: stepping-stone ceiling above our side
         default: "0.02"
       queue:
-        description: JSON list of further tasks; the publish job dispatches the next 2 of them with the same settings
+        description: JSON list of further tasks; the publish job dispatches the next ones (as many as the width) with the same settings
         default: '[]'
+      width:
+        description: parallel explorer jobs per wave
+        default: "6"
+      chain:
+        description: yes = dispatch the next wave from the queue / rotation when done
+        default: "yes"
 
 permissions:
   contents: write
@@ -106,15 +112,16 @@ jobs:
           echo "::notice title=summary::$(tr '\n' ' ' < out/summary.txt | cut -c1-900)"
           gh release create "explore-${{ github.run_number }}" out/summary.txt out/merge.log out/ex_*.log --title "explore ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}, ${{ inputs.minutes }} min per puzzle" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
       - name: next tasks from the queue
+        if: ${{ inputs.chain != 'no' }}
         env:
           GH_TOKEN: ${{ github.token }}
           QUEUE: ${{ inputs.queue }}
         run: |
           # an empty queue is refilled from design/explore_rotation.json, so the explorer keeps cycling until stopped
           python3 -c "import json,os; q=json.loads(os.environ['QUEUE'] or '[]') or json.load(open('design/explore_rotation.json')); json.dump(q,open('q.json','w'))"
-          T=$(python3 -c "import json; q=json.load(open('q.json')); print(json.dumps(q[:2]))")
-          Q=$(python3 -c "import json; q=json.load(open('q.json')); print(json.dumps(q[2:]))")
+          T=$(python3 -c "import json; q=json.load(open('q.json')); print(json.dumps(q[:${{ inputs.width }}]))")
+          Q=$(python3 -c "import json; q=json.load(open('q.json')); print(json.dumps(q[${{ inputs.width }}:]))")
           if [ "$T" != "[]" ]; then
-            gh workflow run explore.yml -f tasks="$T" -f queue="$Q" -f minutes=${{ inputs.minutes }} -f smax=${{ inputs.smax }}
+            gh workflow run explore.yml -f tasks="$T" -f queue="$Q" -f minutes=${{ inputs.minutes }} -f smax=${{ inputs.smax }} -f width=${{ inputs.width }}
             echo "::notice title=chain::next $T, queue $Q"
           fi
