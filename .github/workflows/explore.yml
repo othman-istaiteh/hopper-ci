@@ -57,7 +57,7 @@ jobs:
             S=$(python3 design/ex_io.py start ours/best.csv $n start_$n.txt)
             SMAX=$(python3 -c "print($S + ${{ inputs.smax }})")
             (cd $EVAND_PACKER && timeout $(( ${{ inputs.minutes }} * 60 + 600 )) python3 -u explore.py --n $n --starts $GITHUB_WORKSPACE/start_$n.txt \
-               --minutes ${{ inputs.minutes }} --procs $(nproc) --smax $SMAX --seed $n --out $GITHUB_WORKSPACE/runs/$n > $GITHUB_WORKSPACE/out/ex_$n.log 2>&1 || true)
+               --minutes ${{ inputs.minutes }} --procs $(nproc) --smax $SMAX --seed $(( n * 1000 + ${{ github.run_number }} )) --out $GITHUB_WORKSPACE/runs/$n > $GITHUB_WORKSPACE/out/ex_$n.log 2>&1 || true)
             (cd $EVAND_PACKER && python3 explore.py --report $GITHUB_WORKSPACE/runs/$n 2>&1 | head -3 >> $GITHUB_WORKSPACE/out/ex_$n.log || true)
             R=$(python3 design/ex_io.py basins runs/$n $n $S out/x)
             echo "$n ours $S: $R" | tee -a out/summary_$TAG.txt
@@ -110,8 +110,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           QUEUE: ${{ inputs.queue }}
         run: |
-          T=$(python3 -c "import json,os; q=json.loads(os.environ['QUEUE'] or '[]'); print(json.dumps(q[:2]))")
-          Q=$(python3 -c "import json,os; q=json.loads(os.environ['QUEUE'] or '[]'); print(json.dumps(q[2:]))")
+          # an empty queue is refilled from design/explore_rotation.json, so the explorer keeps cycling until stopped
+          python3 -c "import json,os; q=json.loads(os.environ['QUEUE'] or '[]') or json.load(open('design/explore_rotation.json')); json.dump(q,open('q.json','w'))"
+          T=$(python3 -c "import json; q=json.load(open('q.json')); print(json.dumps(q[:2]))")
+          Q=$(python3 -c "import json; q=json.load(open('q.json')); print(json.dumps(q[2:]))")
           if [ "$T" != "[]" ]; then
             gh workflow run explore.yml -f tasks="$T" -f queue="$Q" -f minutes=${{ inputs.minutes }} -f smax=${{ inputs.smax }}
             echo "::notice title=chain::next $T, queue $Q"
