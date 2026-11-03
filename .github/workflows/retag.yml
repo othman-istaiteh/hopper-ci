@@ -1,0 +1,30 @@
+name: retag
+# One-off, run by hand from the Actions tab: moves every release tag that points to a commit no longer on main onto the
+# commit of main with the same file tree (same files, rewritten author), so no tag keeps the old commits alive.
+# Releases and their assets are not touched.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: move tags onto the rewritten commits
+        run: |
+          git fetch -q --tags --force origin
+          declare -A M
+          while read sha tree; do [ -z "${M[$tree]}" ] && M[$tree]=$sha; done < <(git log --format='%H %T' origin/main)
+          args=()
+          for t in $(git tag); do
+            c=$(git rev-parse "$t^{commit}")
+            git merge-base --is-ancestor "$c" origin/main && continue
+            n=${M[$(git log -1 --format=%T "$c")]}
+            if [ -n "$n" ]; then args+=("+$n:refs/tags/$t"); echo "$t: ${c:0:12} -> ${n:0:12}"; else echo "$t: no match, left as is"; fi
+          done
+          [ ${#args[@]} -gt 0 ] && git push origin "${args[@]}" || echo "nothing to move"

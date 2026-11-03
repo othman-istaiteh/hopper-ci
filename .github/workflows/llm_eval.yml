@@ -1,0 +1,103 @@
+name: llm_eval
+# LLM program search: evaluate the generator programs of one round (design/llm/<round>/*.py, see hop/llm_eval.py) on a
+# panel of puzzles, each candidate relaxed with fq quench + packer hop --temp 1.0. Publishes release llm-<round>-<run>
+# with results_*.json (fitness per program), eval_*.log and submission.csv (certified wins below our sides).
+on:
+  workflow_dispatch:
+    inputs:
+      round:
+        description: round directory under design/llm/
+        default: "r1"
+      panel:
+        description: comma-separated puzzles
+        default: "299,412,498,544"
+      minutes:
+        description: minutes per candidate (quench 3 min + hop)
+        default: "6"
+      seeds:
+        description: seeds per program and puzzle
+        default: "2"
+      shards:
+        description: JSON list of shard indices (one job each)
+        default: "[0, 1, 2]"
+
+permissions:
+  contents: write
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(inputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build packer and fq
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock
+          cd search/packer && cargo build --release --bin fq --bin packer 2>&1 | tail -2
+      - name: python deps
+        run: pip install -q numpy scipy mpmath
+      - name: base packings (newest merge release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          t=$(gh release list -L 50 --json tagName --jq '[.[].tagName | select(startswith("merge-"))] | sort_by(ltrimstr("merge-") | tonumber) | last')
+          echo "base $t"; gh release download "$t" -p submission.csv -D base --clobber
+          cp base/submission.csv design/llm/base.csv
+      - name: evaluate shard ${{ matrix.shard }}
+        run: |
+          mkdir -p out
+          cd hop
+          FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
+          PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
+          SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt FQ_DEADLINE=60 HOP_ENGINE=quenchhop \
+          LLM_PANEL=${{ inputs.panel }} LLM_MIN=${{ inputs.minutes }} LLM_SEEDS=${{ inputs.seeds }} \
+          LLM_SHARD=${{ matrix.shard }} LLM_NSHARD=${{ strategy.job-total }} \
+          python3 -u llm_eval.py $GITHUB_WORKSPACE/design/llm/${{ inputs.round }} $GITHUB_WORKSPACE/base/submission.csv $GITHUB_WORKSPACE/out \
+            | tee $GITHUB_WORKSPACE/out/eval_${{ matrix.shard }}.log | tail -40
+          mv $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/sub_${{ matrix.shard }}.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llm-${{ matrix.shard }}
+          path: out/
+
+  publish:
+    needs: eval
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          cp parts/*/results_*.json parts/*/eval_*.log out/ || true
+          head -1 $(ls parts/*/sub_*.csv | head -1) > out/submission.csv
+          python3 - <<'EOF'
+          import csv, glob
+          rows = []; best = {}
+          for f in sorted(glob.glob('parts/*/sub_*.csv')):
+              part = {}
+              for r in csv.DictReader(open(f)):
+                  part.setdefault(r['n'], []).append(r)
+              for n, rs in part.items():
+                  best.setdefault(n, rs)  # one shard's packing per puzzle
+              rows += sum(part.values(), [])
+          with open('out/submission.csv', 'w', newline='') as f:
+              w = csv.writer(f); w.writerow(['id', 'n', 'square_id', 'x', 'y', 'angle']); i = 0
+              for n, rs in best.items():
+                  for r in rs:
+                      w.writerow([i, n, r['square_id'], r['x'], r['y'], r['angle']]); i += 1
+          print(len(rows), 'win rows')
+          EOF
+          grep -h "FITNESS\|CERTIFIED" out/eval_*.log | sort -k3 -g > out/fitness.txt || true
+          cat out/fitness.txt
+          gh release create "llm-${{ inputs.round }}-${{ github.run_number }}" out/* --title "llm ${{ inputs.round }} ${{ github.run_number }}" --notes "panel ${{ inputs.panel }}, ${{ inputs.minutes }} min x ${{ inputs.seeds }} seeds"
