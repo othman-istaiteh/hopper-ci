@@ -52,26 +52,18 @@ jobs:
               (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d/src" "$GITHUB_WORKSPACE/pubs" "emb$i") || true
             rm -rf "$d/src"
             timeout 600 kaggle kernels output "$r" -p "$d" > /dev/null 2>&1 || { echo "  $r: no output"; rm -rf "$d"; continue; }
-            k=0
-            for f in $(find "$d" -type f -name '*.csv' -size +100k); do
-              if head -1 "$f" | grep -q "square_id"; then k=$((k+1)); mkdir -p "pubs/pub${i}_$k"; cp "$f" "pubs/pub${i}_$k/submission.csv"; fi
-            done
-            echo "  $r: $k submission files"
+            echo "  $r:"; (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "pub$i") || true
             rm -rf "$d"
           done
-          # public datasets (searched by competition keywords, newest first, at most 20, each at most 300 MB)
+          # public datasets (searched by competition keywords, newest first, at most 20, each at most 1 GB)
           j=0
           for q in "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "square packing"; do
-            kaggle datasets list --search "$q" --sort-by updated --max-size 300000000 --csv 2>/dev/null | tail -n +2 | cut -d, -f1 | head -10
+            kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --csv 2>/dev/null | tail -n +2 | cut -d, -f1 | head -10
           done | sort -u | grep / | head -20 > dsets.txt || true
           for ds in $(cat dsets.txt); do
             j=$((j+1)); d="pub/ds_$j"; mkdir -p "$d"
-            timeout 600 kaggle datasets download "$ds" -p "$d" --unzip > /dev/null 2>&1 || { echo "  dataset $ds: download failed"; rm -rf "$d"; continue; }
-            k=0
-            for f in $(find "$d" -type f -name '*.csv' -size +100k); do
-              if head -1 "$f" | grep -q "square_id"; then k=$((k+1)); mkdir -p "pubs/ds${j}_$k"; cp "$f" "pubs/ds${j}_$k/submission.csv"; fi
-            done
-            echo "  dataset $ds: $k submission files"
+            timeout 900 kaggle datasets download "$ds" -p "$d" --unzip > /dev/null 2>&1 || { echo "  dataset $ds: download failed"; rm -rf "$d"; continue; }
+            echo "  dataset $ds:"; (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "ds$j") || true
             rm -rf "$d"
           done
           mkdir -p ours
@@ -162,6 +154,8 @@ jobs:
             for c in '"id,n,square_id,x,y,angle"' '"square_id" packing unit squares' "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d) kaggle"; do
               gh api -X GET search/code -f q="$c" -f per_page=100 --jq '.items[].repository|select(.fork|not)|.full_name' 2> cs_err.txt | tee -a cs_hits.txt || echo "::warning::code search failed: $(head -c 200 cs_err.txt)"; sleep 7
             done
+            # known sources that publish packings as .csv.gz outside the code-search index
+            echo yugavka/square_in_squares
           } | sort -u | grep -v -i -E "^(othman-istaiteh|evand|Mishapolk|franciscouzo|dostashev|itsnaka|wand125|griffcass|jlevy)/" | head -80 > repos.txt || true
           echo "repos:"; cat repos.txt
           echo "::notice title=ghsearch-count::$(wc -l < repos.txt) repos, $(sort -u cs_hits.txt 2>/dev/null | wc -l) from code search"
@@ -174,9 +168,7 @@ jobs:
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
           (cd hop && python3 best_merge.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/ours/best.csv | tail -1)
           for d in gx/r*/; do t=$(basename "$d"); [ -d "$d" ] || continue
-            k=0; while IFS= read -r -d '' f; do
-              if head -1 "$f" | grep -q "square_id"; then k=$((k+1)); mkdir -p "pubs/${t}_c$k"; cp "$f" "pubs/${t}_c$k/submission.csv"; fi
-            done < <(find "$d" -type f -name '*.csv' -size +1k -size -300M -print0)
+            (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_c") || true
             (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_e") || true
           done
           (cd hop && python3 -I certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/gcerts.csv $GITHUB_WORKSPACE/gx | tail -3) || true
