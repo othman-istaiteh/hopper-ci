@@ -14,6 +14,9 @@ on:
       wide:
         description: "yes = GitHub search over all repositories whatever their age (otherwise only the 06 UTC run is wide)"
         default: "no"
+      ds_refs:
+        description: comma-separated dataset refs (owner/slug) to read instead of the keyword search
+        default: ""
       ds_top:
         description: how many datasets per keyword search, newest first (20 per page; use 200 for a full sweep)
         default: "10"
@@ -38,6 +41,7 @@ jobs:
           REFS: ${{ inputs.refs }}
           TOP: ${{ inputs.top }}
           DS_TOP: ${{ inputs.ds_top || '10' }}
+          DS_REFS: ${{ inputs.ds_refs }}
         run: |
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
@@ -69,10 +73,11 @@ jobs:
               kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --page $pg --csv 2>/dev/null | tail -n +2 | cut -d, -f1
             done | head -n "$DS_TOP"
           done | sort -u | grep / > dsets.txt || true
+          if [ -n "$DS_REFS" ]; then echo "$DS_REFS" | tr ',' '\n' | grep / > dsets.txt; fi
           echo "datasets: $(wc -l < dsets.txt)"
           for ds in $(cat dsets.txt); do
             j=$((j+1)); d="pub/ds_$j"; mkdir -p "$d"
-            timeout 900 kaggle datasets download "$ds" -p "$d" --unzip > /dev/null 2>&1 || { echo "  dataset $ds: download failed"; rm -rf "$d"; continue; }
+            timeout 2400 kaggle datasets download "$ds" -p "$d" --unzip > /dev/null 2>&1 || { echo "  dataset $ds: download failed"; rm -rf "$d"; continue; }
             echo "  dataset $ds:"; (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "ds$j") || true
             rm -rf "$d"
           done
