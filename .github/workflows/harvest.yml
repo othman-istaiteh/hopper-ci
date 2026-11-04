@@ -11,6 +11,9 @@ on:
       top:
         description: how many notebooks from each listing when refs is empty
         default: "15"
+      wide:
+        description: "yes = GitHub search over all repositories whatever their age (otherwise only the 06 UTC run is wide)"
+        default: "no"
       ds_top:
         description: how many datasets per keyword search, newest first (20 per page; use 200 for a full sweep)
         default: "10"
@@ -139,50 +142,60 @@ jobs:
           fi
 
   ghsearch:
-    # new public GitHub repositories about square packing (pushed in the last 21 days, not in the certs list, < 300 MB):
+    # public GitHub repositories about square packing (pushed in the last 21 days; all ages on the daily wide run):
     # shallow clone, then read only: *.cert certificates, competition-format CSVs (header with square_id), packings
     # written as literals in code. Nothing from the clones is executed. Winners -> results/ghsearch_<date>.csv.gz
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - name: python deps
         run: pip install -q numpy mpmath
-      - name: search and clone
+      - name: search, clone and extract (one repository at a time, deleted after reading)
         env:
           GH_TOKEN: ${{ github.token }}
+          WIDE: ${{ inputs.wide }}
         run: |
-          SINCE=$(date -u -d '21 days ago' +%F)
+          # narrow mode (every run): repositories pushed in the last 21 days. Wide mode (the 06 UTC run, or input wide=yes):
+          # every repository and code hit about square packing whatever its age, 3 pages per query.
+          if [ "$WIDE" = "yes" ] || [ "$(date -u +%H)" = "06" ]; then MODE=wide; DATEQ=""; PAGES=3; else MODE=narrow; DATEQ=" pushed:>$(date -u -d '21 days ago' +%F)"; PAGES=1; fi
+          echo "mode: $MODE"
           {
-            for q in "square packing" "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "packing unit squares" "square-packing" "squish squares"; do
-              gh api -X GET search/repositories -f q="$q pushed:>$SINCE" -f per_page=30 --jq '.items[]|select(.size < 300000)|.full_name' 2>/dev/null || true
+            for q in "square packing" "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d)" "squares_in_squares" "packing unit squares" "unit square packing" "square-packing" "squish squares" "packing squares" "square packing certificate" "pack n unit squares"; do
+              for pg in $(seq 1 $PAGES); do
+                gh api -X GET search/repositories -f q="$q$DATEQ" -f per_page=100 -f page=$pg --jq '.items[]|select(.size < 400000)|.full_name' 2>/dev/null || true; sleep 2
+              done
             done
             # code search finds repositories of new accounts whatever their name (submission header, competition keywords)
-            for c in '"id,n,square_id,x,y,angle"' '"square_id" packing unit squares' "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d) kaggle"; do
-              gh api -X GET search/code -f q="$c" -f per_page=100 --jq '.items[].repository|select(.fork|not)|.full_name' 2> cs_err.txt | tee -a cs_hits.txt || echo "::warning::code search failed: $(head -c 200 cs_err.txt)"; sleep 7
+            for c in '"id,n,square_id,x,y,angle"' '"square_id,x,y,angle"' '"square_id" packing unit squares' "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d) kaggle" 'filename:submission.csv square_id' 'extension:cert packing squares'; do
+              for pg in $(seq 1 $PAGES); do
+                gh api -X GET search/code -f q="$c" -f per_page=100 -f page=$pg --jq '.items[].repository|select(.fork|not)|.full_name' 2> cs_err.txt | tee -a cs_hits.txt || echo "::warning::code search failed: $(head -c 200 cs_err.txt)"; sleep 7
+              done
             done
-            # known sources that publish packings as .csv.gz outside the code-search index
-            echo yugavka/square_in_squares
-          } | sort -u | grep -v -i -E "^(othman-istaiteh|evand|Mishapolk|franciscouzo|dostashev|itsnaka|wand125|griffcass|jlevy)/" | head -80 > repos.txt || true
-          echo "repos:"; cat repos.txt
-          echo "::notice title=ghsearch-count::$(wc -l < repos.txt) repos, $(sort -u cs_hits.txt 2>/dev/null | wc -l) from code search"
-          mkdir -p gx
-          i=0; for r in $(cat repos.txt); do i=$((i+1)); timeout 300 git clone -q --depth 1 --filter=blob:limit=200m "https://github.com/$r.git" "gx/r$i" 2>/dev/null || echo "clone $r failed"; rm -rf "gx/r$i/.git"; done
-          du -sh gx || true
-      - name: extract candidates
-        run: |
-          mkdir -p ours slices pubs out
+            # known sources that publish packings as .csv.gz or JSON outside the code-search index
+            echo yugavka/square_in_squares; echo sosudo/squares_in_squares; echo TheSnakeFang/squarepack-certs
+          } | sort -u > hits.txt || true
+          # keep packing-related names; code-search hits are kept whatever their name
+          { grep -i -E "(squar.*pack|pack.*squar|squares?[-_]?in[-_]?squares?|square.?packing|squish|unit.?squares|n[0-9]+-square|s[0-9]+-(upper|lower)|square.*cert|kaggle.*squar|squar.*kaggle)" hits.txt; sort -u cs_hits.txt 2>/dev/null; } \
+            | sort -u | grep -v -i -E "^(othman-istaiteh|evand|Mishapolk|franciscouzo|dostashev|itsnaka|wand125|griffcass|jlevy)/|circle|sphere|bin-?pack|webpack|knapsack|sqpack(fs|tool)" | head -250 > repos.txt || true
+          echo "::notice title=ghsearch-count::$MODE: $(wc -l < hits.txt) hits, $(wc -l < repos.txt) repos kept, $(sort -u cs_hits.txt 2>/dev/null | wc -l) from code search"
+          mkdir -p ours slices pubs out gx
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
           (cd hop && python3 best_merge.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/ours/best.csv | tail -1)
-          for d in gx/r*/; do t=$(basename "$d"); [ -d "$d" ] || continue
-            (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_c") || true
+          i=0; for r in $(cat repos.txt); do
+            i=$((i+1)); d="gx/r$i"; t="r$i"
+            timeout 300 git clone -q --depth 1 --filter=blob:limit=150m "https://github.com/$r.git" "$d" 2>/dev/null || { echo "clone $r failed"; rm -rf "$d"; continue; }
+            rm -rf "$d/.git"; echo "$t $r"
+            (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_c") | grep -v " 0 files" || true
             (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_e") || true
+            if find "$d" -name '*.cert' -print -quit | grep -q .; then
+              (cd hop && timeout 900 python3 -I certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/gc_$t.csv $GITHUB_WORKSPACE/$d | tail -1) || true
+              if [ -s out/gc_$t.csv ] && [ "$(wc -l < out/gc_$t.csv)" -gt 1 ]; then mkdir -p pubs/${t}_cert && cp out/gc_$t.csv pubs/${t}_cert/submission.csv; fi
+            fi
+            rm -rf "$d"
           done
-          (cd hop && python3 -I certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/gcerts.csv $GITHUB_WORKSPACE/gx | tail -3) || true
-          if [ -s out/gcerts.csv ] && [ "$(wc -l < out/gcerts.csv)" -gt 1 ]; then mkdir -p pubs/gcerts && cp out/gcerts.csv pubs/gcerts/submission.csv; fi
           (cd hop && python3 prefilter.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/pubs) || echo "prefilter failed"
           for d in pubs/*/; do if [ -d "$d" ]; then mv "$d" slices/; fi; done
-          echo "candidate slices: $(ls pubs 2>/dev/null | wc -l) moved"
       - name: certified merge, keep the improvements
         env:
           GH_TOKEN: ${{ github.token }}
