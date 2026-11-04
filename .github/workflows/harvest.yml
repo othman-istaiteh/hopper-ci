@@ -11,6 +11,9 @@ on:
       top:
         description: how many notebooks from each listing when refs is empty
         default: "15"
+      ds_top:
+        description: how many datasets per keyword search, newest first (20 per page; use 200 for a full sweep)
+        default: "10"
   schedule:
     - cron: "17 */6 * * *"
 
@@ -20,7 +23,7 @@ permissions:
 jobs:
   harvest:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
       - name: python deps
@@ -31,6 +34,7 @@ jobs:
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
           REFS: ${{ inputs.refs }}
           TOP: ${{ inputs.top }}
+          DS_TOP: ${{ inputs.ds_top || '10' }}
         run: |
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
@@ -58,8 +62,11 @@ jobs:
           # public datasets (searched by competition keywords, newest first, at most 20, each at most 1 GB)
           j=0
           for q in "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "square packing"; do
-            kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --csv 2>/dev/null | tail -n +2 | cut -d, -f1 | head -10
-          done | sort -u | grep / | head -20 > dsets.txt || true
+            for pg in $(seq 1 $(( (DS_TOP + 19) / 20 ))); do
+              kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --page $pg --csv 2>/dev/null | tail -n +2 | cut -d, -f1
+            done | head -n "$DS_TOP"
+          done | sort -u | grep / > dsets.txt || true
+          echo "datasets: $(wc -l < dsets.txt)"
           for ds in $(cat dsets.txt); do
             j=$((j+1)); d="pub/ds_$j"; mkdir -p "$d"
             timeout 900 kaggle datasets download "$ds" -p "$d" --unzip > /dev/null 2>&1 || { echo "  dataset $ds: download failed"; rm -rf "$d"; continue; }
