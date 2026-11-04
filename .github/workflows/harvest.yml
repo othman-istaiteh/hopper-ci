@@ -62,7 +62,8 @@ jobs:
             mkdir -p "$d/src" && timeout 120 kaggle kernels pull "$r" -p "$d/src" > /dev/null 2>&1 && \
               (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d/src" "$GITHUB_WORKSPACE/pubs" "emb$i") || true
             rm -rf "$d/src"
-            timeout 600 kaggle kernels output "$r" -p "$d" > /dev/null 2>&1 || { echo "  $r: no output"; rm -rf "$d"; continue; }
+            ok=0; for t in 1 2 3; do timeout 600 kaggle kernels output "$r" -p "$d" > ko.log 2>&1 && { ok=1; break; }; sleep $((t * 20)); done
+            [ $ok = 1 ] || { echo "  $r: no output ($(tail -c 200 ko.log | tr '\n' ' '))"; rm -rf "$d"; continue; }
             echo "  $r:"; (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "pub$i") || true
             rm -rf "$d"
           done
@@ -77,7 +78,8 @@ jobs:
           echo "datasets: $(wc -l < dsets.txt)"
           for ds in $(cat dsets.txt); do
             j=$((j+1)); d="pub/ds_$j"; mkdir -p "$d"
-            timeout 2400 kaggle datasets download "$ds" -p "$d" --unzip > /dev/null 2>&1 || { echo "  dataset $ds: download failed"; rm -rf "$d"; continue; }
+            ok=0; for t in 1 2 3; do timeout 2400 kaggle datasets download "$ds" -p "$d" --unzip > dl.log 2>&1 && { ok=1; break; }; sleep $((t * 20)); done
+            [ $ok = 1 ] || { echo "  dataset $ds: download failed ($(tail -c 200 dl.log | tr '\n' ' '))"; rm -rf "$d"; continue; }
             echo "  dataset $ds:"; (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "ds$j") || true
             rm -rf "$d"
           done
