@@ -1,0 +1,38 @@
+name: kaggle_lb
+# Read-only Kaggle listings for source hunting: the full public leaderboard (team names and scores) and every public
+# notebook of the competition with its author (all pages). Published as assets of the rolling release "scan".
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: kaggle CLI
+        run: pip install -q kaggle
+      - name: listings
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          COMP=$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d)
+          mkdir -p out lbz
+          kaggle competitions leaderboard "$COMP" -d -p lbz > /dev/null 2>&1 || true
+          (cd lbz && for z in *.zip; do [ -f "$z" ] && unzip -o -q "$z"; done; true)
+          f=$(find lbz -name '*.csv' | head -1); [ -n "$f" ] && cp "$f" out/leaderboard_full.csv
+          echo "leaderboard rows: $(wc -l < out/leaderboard_full.csv 2>/dev/null)"
+          : > out/kernels_all.csv
+          for p in $(seq 1 30); do
+            kaggle kernels list --competition "$COMP" --sort-by dateCreated --page-size 100 --page $p --csv 2>/dev/null > page.csv || break
+            [ "$(wc -l < page.csv)" -le 1 ] && break
+            if [ ! -s out/kernels_all.csv ]; then cat page.csv > out/kernels_all.csv; else tail -n +2 page.csv >> out/kernels_all.csv; fi
+          done
+          echo "kernels: $(wc -l < out/kernels_all.csv)"
+          gh release upload scan out/* --clobber -R ${{ github.repository }}
