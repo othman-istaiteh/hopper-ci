@@ -3,6 +3,10 @@ name: kaggle_lb
 # notebook of the competition with its author (all pages). Published as assets of the rolling release "scan".
 on:
   workflow_dispatch:
+    inputs:
+      users:
+        description: comma-separated Kaggle usernames whose public notebooks and datasets to list (any topic)
+        default: ""
 
 permissions:
   contents: write
@@ -19,6 +23,7 @@ jobs:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
           GH_TOKEN: ${{ github.token }}
+          USERS: ${{ inputs.users }}
         run: |
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
@@ -35,4 +40,11 @@ jobs:
             if [ ! -s out/kernels_all.csv ]; then cat page.csv > out/kernels_all.csv; else tail -n +2 page.csv >> out/kernels_all.csv; fi
           done
           echo "kernels: $(wc -l < out/kernels_all.csv)"
+          echo "ref,title,author,lastRunTime,totalVotes" > out/user_kernels.csv; echo "ref,title,size,lastUpdated" > out/user_datasets.csv
+          for u in $(echo "$USERS" | tr ',' ' '); do
+            kaggle kernels list --user "$u" --page-size 100 --csv 2>/dev/null | tail -n +2 >> out/user_kernels.csv || true
+            kaggle datasets list --user "$u" --csv 2>/dev/null | tail -n +2 | cut -d, -f1-4 >> out/user_datasets.csv || true
+            sleep 1
+          done
+          echo "user kernels: $(wc -l < out/user_kernels.csv), user datasets: $(wc -l < out/user_datasets.csv)"
           gh release upload scan out/* --clobber -R ${{ github.repository }}
