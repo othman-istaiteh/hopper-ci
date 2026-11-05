@@ -103,7 +103,7 @@ jobs:
            python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
           if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
             gzip -9 -c out/improved.csv > "results/explore_$(date +%m%d)_${{ github.run_number }}.csv.gz"
-            git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
             git add results/ && git commit -q -m "results: explorer ${{ github.run_number }}" || true
             for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
             echo "::notice title=improved::$(tail -3 out/merge.log | tr '\n' ' ' | cut -c1-500)"

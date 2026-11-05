@@ -91,7 +91,7 @@ jobs:
           grep -h "^done\|init s=" out/l*.log | tee out/summary.txt || true
           if [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
             gzip -9 -c out/improved.csv > "results/layout_$(date +%m%d)_${{ github.run_number }}.csv.gz"
-            git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
             git add results/ && git commit -q -m "results: layout search ${{ github.run_number }}" || true
             for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
           else
