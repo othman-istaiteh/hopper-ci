@@ -136,7 +136,7 @@ jobs:
           cd hop && python3 best_merge.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/ours/best.csv
       - name: certificates below our sides
         run: |
-          cd hop && python3 -I certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/certs.csv $GITHUB_WORKSPACE/ext | tee $GITHUB_WORKSPACE/out/certs.log | tail -12
+          set -o pipefail; cd hop && python3 certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/certs.csv $GITHUB_WORKSPACE/ext | tee $GITHUB_WORKSPACE/out/certs.log | tail -12
       - name: commit
         run: |
           if [ -s out/certs.csv ] && [ "$(wc -l < out/certs.csv)" -gt 1 ]; then
@@ -196,7 +196,7 @@ jobs:
             (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_c") | grep -v " 0 files" || true
             (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_e") || true
             if find "$d" -name '*.cert' -print -quit | grep -q .; then
-              (cd hop && timeout 900 python3 -I certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/gc_$t.csv $GITHUB_WORKSPACE/$d | tail -1) || true
+              (cd hop && timeout 900 python3 certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/gc_$t.csv $GITHUB_WORKSPACE/$d | tail -1) || true
               if [ -s out/gc_$t.csv ] && [ "$(wc -l < out/gc_$t.csv)" -gt 1 ]; then mkdir -p pubs/${t}_cert && cp out/gc_$t.csv pubs/${t}_cert/submission.csv; fi
             fi
             rm -rf "$d"
