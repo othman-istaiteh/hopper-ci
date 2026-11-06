@@ -94,6 +94,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main   # the latest main, not the dispatch-time commit: results committed during the run must be merged
       - uses: actions/download-artifact@v4
         with:
           path: slices
