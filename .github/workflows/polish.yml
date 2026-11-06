@@ -12,14 +12,23 @@ on:
         description: number of parallel jobs (slices)
         default: "20"
       deadline:
-        description: fq --deadline per puzzle (seconds)
-        default: "900"
+        description: fq --deadline per puzzle and schedule (seconds)
+        default: "300"
       targets:
         description: total number of targets (gap-ranked non-grid puzzles), split over the jobs
         default: "547"
       skip:
         description: skip the first N targets
         default: "0"
+      sched:
+        description: comma list of fq schedules (hop/polish.py SCHEDS; deep = the old POLISH_DEEP, round15p5 / round15nc = rounded-square hardening)
+        default: "round15p5,round15nc"
+      descend:
+        description: also run the exact corner-corner descent (yes / no)
+        default: "no"
+      evand_ref:
+        description: commit of evand/square-packing to build fq from
+        default: "bb4cc78"
 
 permissions:
   contents: write
@@ -50,12 +59,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: build fq and fetch the exact descent
         run: |
-          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
-          cd evand && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock \
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q ${{ inputs.evand_ref }} && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock \
             /search/exact/descend.py /search/exact/exactsolve.py /search/exact/geom.py /search/exact/verify_cert.py /search/exact/conesupport.py \
             /search/packer/slp2.py /search/packer/slp.py /search/packer/rigid.py /search/packer/inc.py
           cd search/packer && cargo build --release --bin fq 2>&1 | tail -2
-          ls -la target/release/fq ../exact/descend.py
+          ls -la target/release/fq; ls ../exact/descend.py 2>/dev/null || echo "no descend.py at this ref"
       - name: python deps
         run: pip install -q numpy mpmath scipy
       - name: polish slice ${{ matrix.slice }}
@@ -68,7 +77,7 @@ jobs:
           PER=$(( (T + J - 1) / J )); SKIP=$(( ${{ inputs.skip }} + S * PER ))
           echo "slice $S: targets $SKIP .. $((SKIP + PER))"
           FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
-          PO_DESCEND=$GITHUB_WORKSPACE/evand/search/exact/descend.py \
+          PO_DESCEND=$([ "${{ inputs.descend }}" = yes ] && echo $GITHUB_WORKSPACE/evand/search/exact/descend.py) PO_SCHED=${{ inputs.sched }} \
           SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
           SQ_WORKERS=$(nproc) PO_DEADLINE=${{ inputs.deadline }} PO_NTARGET=$PER PO_SKIP=$SKIP \
           PO_DESC_TIMEOUT=600 PO_BUDGET_H=5.0 \
@@ -97,11 +106,25 @@ jobs:
           ls slices
           cd hop
           SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
-          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tail -20
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -20
+      - name: keep the improvements in results/
+        run: |
+          mkdir -p ours
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; done
+          (cd hop && python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            gzip -9 -c out/improved.csv > "results/polish_$(date +%m%d)_${{ github.run_number }}.csv.gz"
+            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
+            git add results/ && git commit -q -m "results: polish ${{ github.run_number }} (${{ inputs.sched }})" || true
+            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            echo "::notice title=improved::$(tail -3 out/merge.log | tr '\n' ' ' | cut -c1-500)"
+          else
+            echo "::notice title=improved::none"
+          fi
       - name: publish as release asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=polish-${{ github.run_number }}
-          gh release create "$TAG" out/submission.csv --title "polish run ${{ github.run_number }}" --notes "certified merge of polish run ${{ github.run_id }}" --latest
+          gh release create "$TAG" out/submission.csv out/merge.log --title "polish run ${{ github.run_number }}" --notes "certified merge of polish run ${{ github.run_id }}, schedules ${{ inputs.sched }}, evand ${{ inputs.evand_ref }}"
           echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"

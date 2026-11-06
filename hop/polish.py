@@ -31,6 +31,17 @@ DESC_TIMEOUT = float(os.environ.get('PO_DESC_TIMEOUT', '600'))
 DESC_ROUNDS = os.environ.get('PO_DESC_ROUNDS', '20')
 BUDGET_S = float(os.environ.get('PO_BUDGET_H', '5.0')) * 3600
 DEEP = ['--no-alm', '--loosen', '1.0', '--pit', PIT, '--flip-top', FLIP, '--finish']
+# PO_SCHED (6 Nov): comma list of fq schedules run independently from the input, each a candidate. The round* ones are
+# Evan Daniel's rounded-square hardening schedules (pk/schedules.py at bb4cc78; CLAIMS C50 / C52: a plain re-quench with
+# the rounded pre-stage improved 742 of 1,241 near-record packings above n 324 in his store, median 8.7e-4 of side).
+SCHEDS = {
+    'deep': DEEP,
+    'round15nc': ['--loosen', '1.0', '--round-r0', '0.15'],
+    'round15c': ['--loosen', '1.0', '--round-r0', '0.15', '--round-compress'],
+    'round15p5': ['--loosen', '1.0', '--round-r0', '0.15', '--round-compress', '--round-press', '--round-steps', '5', '--round-press-outer', '30'],
+    'round25c': ['--loosen', '1.0', '--round-r0', '0.25', '--round-compress', '--round-steps', '40'],
+}
+SCHED_NAMES = [s for s in os.environ.get('PO_SCHED', 'deep').split(',') if s]
 T0 = time.time()
 
 
@@ -70,18 +81,26 @@ def polish_job(job):
             os.makedirs(d, exist_ok=True)
             inp = os.path.join(d, 'in.txt'); R.to_fq(R.arr(rs), inp)
             pol = os.path.join(d, 'deep.txt'); dsc = os.path.join(d, 'desc.txt')
-            for p in (pol, dsc):
+            for p in [pol, dsc] + [os.path.join(d, s + '.txt') for s in SCHED_NAMES]:
                 if os.path.exists(p):
                     os.remove(p)
             if os.path.exists(R.FQ):
-                try:
-                    subprocess.run([R.FQ, 'quench', '--in', inp, '--out', pol, '--deadline', '%g' % DEADLINE] + DEEP,
-                                   capture_output=True, text=True, timeout=DEADLINE + 120)
-                except subprocess.TimeoutExpired:
-                    res['err'] = 'fq timeout'
-                got = read_out(pol, n)
-                if got:
-                    res['pol'] = got[0]; cands.append((got[0], tag + '+deep', got[1]))
+                for sname in SCHED_NAMES:
+                    outp = pol if sname == 'deep' else os.path.join(d, sname + '.txt')
+                    try:
+                        subprocess.run([R.FQ, 'quench', '--in', inp, '--out', outp, '--deadline', '%g' % DEADLINE] + SCHEDS[sname],
+                                       capture_output=True, text=True, timeout=DEADLINE + 120)
+                    except subprocess.TimeoutExpired:
+                        res['err'] += ' fq timeout ' + sname
+                    got = read_out(outp, n)
+                    if got:
+                        cands.append((got[0], tag + '+' + sname, got[1]))
+                        if sname == 'deep' or res['pol'] is None or got[0] < res['pol']:
+                            res['pol'] = got[0]
+                            if sname == 'deep': pol = outp
+                if res['pol'] is not None and 'deep' not in SCHED_NAMES:
+                    pol = min((os.path.join(d, s + '.txt') for s in SCHED_NAMES if read_out(os.path.join(d, s + '.txt'), n)),
+                              key=lambda p: read_out(p, n)[0])
             # exact corner-corner descent on the polished packing (on the input when the polish produced nothing)
             if DESCEND and os.path.exists(DESCEND):
                 src = pol if res['pol'] is not None else inp
@@ -136,7 +155,7 @@ def main(out_path):
     targets = order[skip:skip + ntarget]
     workers = int(os.environ.get('SQ_WORKERS', str(os.cpu_count() or 4)))
     print(f'{len(best_in)} non-grid puzzles, board {len(board)} rows; slice {skip}..{skip + len(targets)}: {len(targets)} puzzles; '
-          f'fq={R.FQ} exists={os.path.exists(R.FQ)}; descend={DESCEND or "-"} exists={bool(DESCEND) and os.path.exists(DESCEND)}; '
+          f'sched={SCHED_NAMES}; fq={R.FQ} exists={os.path.exists(R.FQ)}; descend={DESCEND or "-"} exists={bool(DESCEND) and os.path.exists(DESCEND)}; '
           f'deadline {DEADLINE:g}s, {workers} workers, about {len(targets) * (DEADLINE + 60) / workers / 3600:.1f} h', flush=True)
     jobs = [(n, best_in[n][1], best_in[n][2]) for n in targets]
     best = {}; npol = 0; ndesc = 0; nskip = 0; imp = []; gain = 0.0; fails = []
