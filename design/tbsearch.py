@@ -1,6 +1,6 @@
 # Parameter search for design/twoblock.py: for one puzzle (n, L) and a set of band thicknesses (N1, N2), random restarts
 # plus hill climbing over the band lengths h1, h2, the lattice phases q1, q2, the wall offsets x01, x02 in {0, 1} and the
-# mirror flags m1, m2 (rows up-right or down-right).
+# mirror flags m1, m2 (rows up-right or down-right) and the bend positions ys1, ys2 (0 = straight band).
 # Usage: python3 tbsearch.py N L SECONDS SEED N1LIST N2LIST OUTPREFIX [INIT_best.json]   (N1LIST like 5,6,7; writes
 # OUTPREFIX_best.json and the best packings OUTPREFIX_<count>_<k>.csv in competition format; INIT continues an earlier run)
 import json, math, os, random, sys, time
@@ -12,8 +12,9 @@ def evaluate(n, L, prm, cache):
     key = tuple(round(v, 4) for v in prm)
     if key in cache:
         return cache[key][0]
-    N1, h1, q1, N2, h2, q2, x01, x02, m1, m2 = prm
-    cnt, P, info = T.build(n, L, int(N1), h1, q1, int(N2), h2, q2, None, None, x01, x02, int(m1), int(m2), time_limit=10.0)
+    N1, h1, q1, N2, h2, q2, x01, x02, m1, m2, ys1, ys2 = prm
+    cnt, P, info = T.build(n, L, int(N1), h1, q1, int(N2), h2, q2, None, None, x01, x02, int(m1), int(m2), time_limit=10.0,
+                           ys1=ys1 if ys1 > 0 else None, ys2=ys2 if ys2 > 0 else None)
     cache[key] = (cnt, P)
     return cnt
 
@@ -24,7 +25,7 @@ def search(n, L, secs, seed, n1s, n2s, prefix, init=None):
     best = {}  # (N1, N2) -> (count, prm)
     if init:  # continue from the results of an earlier run (its _best.json)
         for e in json.load(open(init))['best']:
-            p = e['prm']
+            p = list(e['prm']) + [0.0] * (12 - len(e['prm']))
             if (int(p[0]), int(p[3])) not in best and e['count'] > 0:
                 best[(int(p[0]), int(p[3]))] = (e['count'], p)
                 cache[tuple(round(v, 4) for v in p)] = (e['count'], None)
@@ -36,7 +37,8 @@ def search(n, L, secs, seed, n1s, n2s, prefix, init=None):
         c1 = math.cos(T.band_angle(N1, f)); c2 = math.cos(T.band_angle(N2, f))
         return [N1, rng.uniform(0.45 * L, L - 1.0), rng.uniform(0, 1 / c1), N2, rng.uniform(0.45 * L, L - 1.0), rng.uniform(0, 1 / c2),
                 1.0 if rng.random() < 0.15 else 0.0, 1.0 if rng.random() < 0.15 else 0.0,
-                float(rng.random() < 0.5), float(rng.random() < 0.5)]
+                float(rng.random() < 0.5), float(rng.random() < 0.5),
+                rng.uniform(2, 0.8 * L) if rng.random() < 0.5 else 0.0, rng.uniform(2, 0.8 * L) if rng.random() < 0.5 else 0.0]
     combos = [(a, b) for a in n1s for b in n2s]
     while time.time() - t0 < secs:
         N1, N2 = rng.choice(combos)
@@ -49,7 +51,7 @@ def search(n, L, secs, seed, n1s, n2s, prefix, init=None):
         stall = 0
         while stall < 25 and time.time() - t0 < secs:
             cand = list(cur)
-            k = rng.choice([1, 2, 4, 5, 1, 2, 4, 5, 6, 7, 8, 9])
+            k = rng.choice([1, 2, 4, 5, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 10, 11])
             if k in (1, 4):
                 cand[k] += rng.gauss(0, 0.5) if rng.random() < 0.7 else rng.uniform(-3, 3)
                 cand[k] = min(L - 0.5, max(2.0, cand[k]))
@@ -57,8 +59,18 @@ def search(n, L, secs, seed, n1s, n2s, prefix, init=None):
                 cand[k] = (cand[k] + rng.gauss(0, 0.15)) % (1 / c1)
             elif k == 5:
                 cand[k] = (cand[k] + rng.gauss(0, 0.15)) % (1 / c2)
+            elif k in (10, 11):
+                if cand[k] <= 0 or rng.random() < 0.2:
+                    cand[k] = rng.uniform(2, 0.8 * L) if (cand[k] <= 0 or rng.random() < 0.5) else 0.0
+                else:
+                    cand[k] = min(0.9 * L, max(2.0, cand[k] + rng.gauss(0, 0.7)))
             else:
                 cand[k] = 1.0 - cand[k]
+            # a bent band slides one column towards the wall above the bend: the lower part must sit one column off
+            # the wall (rows up-right) or at the wall (rows down-right)
+            for kb, kx, km in ((10, 6, 8), (11, 7, 9)):
+                if cand[kb] > 0:
+                    cand[kx] = 0.0 if cand[km] > 0.5 else 1.0
             c2v = evaluate(n, L, cand, cache); it += 1
             if c2v >= cc:
                 if c2v > cc:
@@ -80,7 +92,8 @@ def search(n, L, secs, seed, n1s, n2s, prefix, init=None):
         key = tuple(round(v, 4) for v in p)
         P = cache[key][1]
         if P is None:
-            P = T.build(n, L, int(p[0]), p[1], p[2], int(p[3]), p[4], p[5], None, None, p[6], p[7], int(p[8]), int(p[9]))[1]
+            P = T.build(n, L, int(p[0]), p[1], p[2], int(p[3]), p[4], p[5], None, None, p[6], p[7], int(p[8]), int(p[9]),
+                        ys1=p[10] if p[10] > 0 else None, ys2=p[11] if p[11] > 0 else None)[1]
         T.write_csv(P, '%s_%d_%d.csv' % (prefix, c, k), n)
     print('DONE n %d L %.4f iters %d best %s' % (n, L, it, [(c, [round(v, 3) for v in p]) for c, p in allbest[:8]]), flush=True)
 

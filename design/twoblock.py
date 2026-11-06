@@ -9,10 +9,11 @@
 # box and K - N + 1 upright columns fit beside it exactly. The band's ends are staircases (lattice squares fully inside
 # the box and below the band length h); the MILP decides the end squares together with the upright fillers.
 #
-# Usage: python3 twoblock.py N L N1 h1 q1 N2 h2 q2 [f1p f2p x01 x02 m1 m2] [--out FILE.csv]
+# Usage: python3 twoblock.py N L N1 h1 q1 N2 h2 q2 [f1p f2p x01 x02 m1 m2 ys1 ys2] [--out FILE.csv]
 #   N1, N2 rows across the left / top band; h1, h2 band lengths along their walls; q1, q2 lattice phases along the wall
 #   (in [0, 1 / cos t)); f1p, f2p effective fractional widths (default f = L - floor(L)); x01, x02 band offsets from the
-#   wall (default 0); m1, m2 = 1 mirror the band (rows running down-right instead of up-right).
+#   wall (default 0); m1, m2 = 1 mirror the band (rows running down-right instead of up-right); ys1, ys2 > 0 bend the
+#   band at that distance along the wall (the leader's one-column slide, see band_squares).
 #   Prints the count; --out writes the packing in competition format (angles in radians, box from 0).
 import math, sys, time
 import numpy as np
@@ -36,26 +37,44 @@ def band_angle(N, fp):
     return 0.5 * (lo + hi)
 
 
-def band_squares(L, N, fp, h, q, x0, mirror=0, ext=0.0):
+def band_squares(L, N, fp, h, q, x0, mirror=0, ext=0.0, ysplit=None):
     # left-wall band in wall coordinates (X across the wall, Y along it, from the corner); returns [(X, Y, t)] and t.
-    # mirror = 1: rows run down-right instead of up-right (the band reflected along the wall), angle 90 - t
+    # mirror = 1: rows run down-right instead of up-right (the band reflected along the wall), angle 90 - t.
+    # ysplit (< h): the leader's bend. The rows below ysplit are the lattice at offset x0 from the wall; above it the
+    # same brick lattice shifted one column towards the wall (x0 - 1, needs x0 >= 1; for a mirrored band away from the
+    # wall, x0 + 1), its first row sitting on the last lower row with the along-wall offset (1 - sin t) / cos t: every
+    # pair of squares of the two rows then touches along e2 exactly (the e2 separation s + dY cos t does not depend on
+    # the column), so the junction is as dense as the lattice and the band's slack column changes side at the bend.
     t = band_angle(N, fp)
     c, s = math.cos(t), math.sin(t)
     hx = 0.5 * (c + s)
     step = 1.0 / c
-    out = []
     ta = (math.pi / 2 - t) if mirror else t
-    for a in range(N):
-        X = x0 + hx + a * c
-        if X + hx > L + TOL:
-            break
-        y0 = q + (-a * s if mirror else a * s)
-        bmin = math.floor((hx - y0) / step) - 1
-        bmax = math.ceil((h + ext - hx - y0) / step) + 1
-        for b in range(bmin, bmax + 1):
-            Y = y0 + b * step
-            if Y - hx >= -TOL and Y + hx <= min(h + ext, L) + TOL:
-                out.append((X, Y, ta))
+    sg = -1.0 if mirror else 1.0
+    out = []
+    ymax = min(h + ext, L)
+
+    def rows(x0r, qr, blo, bhi, ylo, yhi):
+        for a in range(N):
+            X = x0r + hx + a * c
+            if X + hx > L + TOL or X - hx < -TOL:
+                continue
+            y0 = qr + sg * a * s
+            for b in range(blo, bhi + 1):
+                Y = y0 + b * step
+                if Y - hx >= max(0.0, ylo) - TOL and Y + hx <= yhi + TOL:
+                    out.append((X, Y, ta))
+    bmin = math.floor((-N * s - 1.0 - q) / step) - 1
+    bmax = math.ceil((ymax + N * s + 1.0 - q) / step) + 1
+    if ysplit is None or ysplit >= h:
+        rows(x0, q, bmin, bmax, 0.0, ymax)
+        return out, t
+    # bent band: lower rows b with q + b step < ysplit (row position of column a = 0), upper lattice above
+    blast = math.floor((ysplit - q - 1e-9) / step)
+    rows(x0, q, bmin, blast, 0.0, ymax)
+    x0u = x0 + (1.0 if mirror else -1.0)
+    qu = q + blast * step + (1.0 - s) / c
+    rows(x0u, qu, 0, bmax, 0.0, ymax)
     return out, t
 
 
@@ -100,14 +119,14 @@ def upright_candidates(L, f, offsets=None):
 
 
 def build(n, L, N1, h1, q1, N2, h2, q2, f1p=None, f2p=None, x01=0.0, x02=0.0, m1=0, m2=0, fix_margin=2.5, time_limit=20.0,
-          offsets=None, ext=0.0, verbose=False):
+          offsets=None, ext=0.0, ys1=None, ys2=None, verbose=False):
     f = L - math.floor(L + 1e-9)
     if f1p is None:
         f1p = f
     if f2p is None:
         f2p = f
-    B1, t1 = band_squares(L, N1, f1p, h1, q1, x01, m1, ext)
-    B2w, t2 = band_squares(L, N2, f2p, h2, q2, x02, m2, ext)
+    B1, t1 = band_squares(L, N1, f1p, h1, q1, x01, m1, ext, ys1)
+    B2w, t2 = band_squares(L, N2, f2p, h2, q2, x02, m2, ext, ys2)
     B2 = to_top(B2w, L)
     # fixed band interiors: squares away from the band ends along the wall
     fixed, free = [], []
@@ -243,15 +262,18 @@ if __name__ == '__main__':
     ext = 1.5 if '--ext' in sys.argv else 0.0  # band lattice squares up to 1.5 beyond the band length as free candidates
     n, L = int(args[0]), float(args[1])
     N1, h1, q1, N2, h2, q2 = int(args[2]), float(args[3]), float(args[4]), int(args[5]), float(args[6]), float(args[7])
-    extra = [float(a) for a in args[8:14]]
+    extra = [float(a) for a in args[8:16]]
     f1p = extra[0] if len(extra) > 0 and extra[0] > 0 else None
     f2p = extra[1] if len(extra) > 1 and extra[1] > 0 else None
     x01 = extra[2] if len(extra) > 2 else 0.0
     x02 = extra[3] if len(extra) > 3 else 0.0
     m1 = int(extra[4]) if len(extra) > 4 else 0
     m2 = int(extra[5]) if len(extra) > 5 else 0
+    ys1 = extra[6] if len(extra) > 6 and extra[6] > 0 else None
+    ys2 = extra[7] if len(extra) > 7 and extra[7] > 0 else None
     t0 = time.time()
-    cnt, P, info = build(n, L, N1, h1, q1, N2, h2, q2, f1p, f2p, x01, x02, m1, m2, offsets=offsets, ext=ext, time_limit=120.0)
+    cnt, P, info = build(n, L, N1, h1, q1, N2, h2, q2, f1p, f2p, x01, x02, m1, m2, offsets=offsets, ext=ext, ys1=ys1, ys2=ys2,
+                         time_limit=120.0)
     bad, oob = check(P, L)
     print('count %d (need %d) t1 %.2f deg t2 %.2f deg overlaps %d outside %d time %.1fs info %s' %
           (cnt, n, math.degrees(info['t1']), math.degrees(info['t2']), bad, oob, time.time() - t0, info))
