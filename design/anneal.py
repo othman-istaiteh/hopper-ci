@@ -95,6 +95,64 @@ def descend(vg, p, S, r, maxiter=400, gtol=1e-12):
     return res.x, float(res.fun)
 
 
+def find_rows(a, n):
+    """Group the tilted squares into band rows (lines along the band's principal direction) and the uprights into
+    grid rows and columns. Returns (band_rows, b, upright_lines) with b the unit band direction."""
+    th = a[:, 2] % (math.pi / 2); tilt = np.minimum(th, math.pi / 2 - th)
+    T = np.where(tilt > 0.02)[0]; U = np.where(tilt <= 0.02)[0]
+    rows = []; b = np.array([1.0, 0.0])
+    if len(T) >= 6:
+        C = a[T, :2]; M = C - C.mean(0)
+        w, v = np.linalg.eigh(M.T @ M); b = v[:, 1]; nb = v[:, 0]
+        proj = M @ nb; order = np.argsort(proj)
+        cur = [T[order[0]]]
+        for k in range(1, len(order)):
+            if proj[order[k]] - proj[order[k - 1]] > 0.45:
+                rows.append(cur); cur = []
+            cur.append(T[order[k]])
+        rows.append(cur)
+        rows = [r for r in rows if len(r) >= 3]
+    lines = []
+    for ax in (0, 1):
+        key = np.round(a[U, ax] - 0.5)
+        for v in np.unique(key):
+            idx = U[key == v]
+            if len(idx) >= 3: lines.append(idx)
+    return rows, b, lines
+
+
+def kick(q, n, S, r, rng, rows, b, lines, L, sigma):
+    """One structural kick on a copy of q: a band-row move (tilt, slide or angle only), an upright line shift, a whole-band
+    tilt, or plain load-weighted noise. Returns (q2, kind)."""
+    q = q.copy(); x, y, th = q[:n], q[n:2 * n], q[2 * n:]
+    u = rng.random()
+    if rows and u < 0.55:
+        row = rows[rng.integers(len(rows))]; kind = rng.random()
+        cx, cy = x[row].mean(), y[row].mean()
+        if kind < 0.4:      # rigid tilt of the row about its centre
+            d = rng.normal(0, 0.03); c, s_ = math.cos(d), math.sin(d)
+            dx, dy = x[row] - cx, y[row] - cy
+            x[row] = cx + c * dx - s_ * dy; y[row] = cy + s_ * dx + c * dy; th[row] += d; return q, 'rowtilt'
+        elif kind < 0.7:    # slide along the band
+            d = rng.normal(0, 0.15); x[row] += d * b[0]; y[row] += d * b[1]; return q, 'rowslide'
+        else:               # angles only
+            th[row] += rng.normal(0, 0.03); return q, 'rowangle'
+    if lines and u < 0.7:
+        line = lines[rng.integers(len(lines))]
+        ax = 0 if np.std(y[line]) < np.std(x[line]) else 1   # shift along the line's own direction
+        d = rng.normal(0, 0.2)
+        if ax == 0: x[line] += d
+        else: y[line] += d
+        return q, 'lineshift'
+    if rows and u < 0.78:   # whole band tilt about the box centre
+        T = np.concatenate(rows); d = rng.normal(0, 0.01); c, s_ = math.cos(d), math.sin(d)
+        dx, dy = x[T] - S / 2, y[T] - S / 2
+        x[T] = S / 2 + c * dx - s_ * dy; y[T] = S / 2 + s_ * dx + c * dy; th[T] += d; return q, 'bandtilt'
+    amp = sigma * (0.3 + L) * (0.5 + rng.random())
+    x += rng.normal(0, 1, n) * amp; y += rng.normal(0, 1, n) * amp; th += rng.normal(0, 1, n) * amp * 0.5
+    return q, 'noise'
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('inp'); ap.add_argument('n', type=int); ap.add_argument('out')
@@ -115,6 +173,7 @@ def main():
     a[:, 0] -= x0; a[:, 1] -= y0
     p = np.concatenate([a[:, 0], a[:, 1], a[:, 2]])
     vg, loads = make_energy(n)
+    rows, bdir, lines = find_rows(a, n)
     logf = open(A.log, 'a') if A.log else None
 
     def say(*w):
@@ -125,7 +184,7 @@ def main():
     # stage 0: make the start feasible at its own side with rounded squares (an overlapping seed is allowed)
     r = A.r0; S = S0 * (1 + 1e-9)
     p, e = descend(vg, p, S, r, maxiter=2000)
-    say(f'start n={n} S0={S0:.6f} r={r:.3f} E={e:.3e} {time.time() - t0:.0f}s')
+    say(f'start n={n} S0={S0:.6f} r={r:.3f} E={e:.3e} band rows {[len(x) for x in rows]} upright lines {len(lines)} {time.time() - t0:.0f}s')
     k_up = 0
     while e > A.tol and k_up < 40:                      # grow the box until the rounded seed is feasible
         S *= 1.002; p, e = descend(vg, p, S, r, maxiter=1000); k_up += 1
@@ -158,17 +217,15 @@ def main():
         fails += 1
         if fails <= A.kicks:
             L = np.asarray(loads(jnp.asarray(p_try), S_try, r)); L = L / (L.max() + 1e-300)
-            amp = A.sigma * (0.3 + L) * (0.5 + rng.random())
-            q = feas[1].copy()
-            q[:n] += rng.normal(0, 1, n) * amp; q[n:2 * n] += rng.normal(0, 1, n) * amp
-            q[2 * n:] += rng.normal(0, 1, n) * amp * (0.5 if r > 0 else 0.3)
+            q, kind = kick(feas[1], n, S_try, r, rng, rows, bdir, lines, L, A.sigma)
             q[:n] = np.clip(q[:n], 0.5, S_try - 0.5); q[n:2 * n] = np.clip(q[n:2 * n], 0.5, S_try - 0.5)
             q, e2 = descend(vg, q, S_try, r, maxiter=800)
             if e2 <= A.tol:
                 feas = (S_try, q, r); fails = 0; cur_ds = A.ds
                 if r == 0.0 and (best_rigid is None or S_try < best_rigid[0]):
                     best_rigid = (S_try, q.copy())
-                say(f'kick ok at S={S_try:.6f} r={r:.3f} ({fails} fails) {time.time() - t0:.0f}s')
+                say(f'kick {kind} ok at S={S_try:.6f} r={r:.3f} {time.time() - t0:.0f}s')
+                aa = np.stack([q[:n], q[n:2 * n], q[2 * n:]], 1); rows, bdir, lines = find_rows(aa, n)
             continue
         # stalled at this radius: harden (r down), re-settle at the current feasible side
         stalls += 1; fails = 0; cur_ds = A.ds
