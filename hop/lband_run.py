@@ -53,7 +53,7 @@ def one_target(args):
     K = math.isqrt(n); t0 = time.time()
     os.makedirs(work, exist_ok=True)
     f0 = s_ours - K
-    log = []; cands = []
+    log = []; cands = []; bestcnt = {}
     for df in dfs:
         f = f0 + df
         if not (0.0 < f < 1.0):
@@ -68,12 +68,15 @@ def one_target(args):
                         cnt, sol = LB2.assemble_split(K, f, N, pt, pr, 'right_rot', jm=3.0, time_limit=tl)
                     except Exception as e:
                         log.append(f'f={f:.4f} N={N} ph=({pt:.2f},{pr:.2f}) error {repr(e)[:80]}'); continue
+                    if sol is not None:
+                        bestcnt[(round(f, 4), N)] = max(bestcnt.get((round(f, 4), N), 0), cnt)
                     if sol is not None and cnt >= n:
                         cands.append((f, -cnt, N, pt, pr, sol))
         if len(cands) >= 12:
             break   # enough assemblies at the smallest sides
     if not cands:
-        return n, s_ours, None, 'no assembly reached n', time.time() - t0
+        top = sorted(bestcnt.items(), key=lambda kv: -kv[1])[:4]
+        return n, s_ours, None, 'no assembly reached n; best counts (f, N): ' + ' '.join('%s,%d:%d' % (k[0], k[1], v) for k, v in top), time.time() - t0
     cands.sort(key=lambda c: (c[0], c[1]))
     best = None; tried = 0
     for f, negc, N, pt, pr, sol in cands[:6]:
