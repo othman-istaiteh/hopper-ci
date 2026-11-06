@@ -5,7 +5,8 @@
 # The band search is design/bandsearch.py (straight lattice band, any tilt, width, offset, phase), here with the band
 # width bounded per seed so the seeds really differ in width. If the exact fill holds fewer than n squares, the tolerant
 # fill adds slightly overlapping squares (tau) and the optimiser has to repair them.
-# Usage: python3 bandseed.py N S SECONDS SEED WMIN WMAX OUT.csv     (writes competition format, angles in radians)
+# Usage: python3 bandseed.py N S SECONDS SEED WMIN WMAX OUT.csv [TAUMAX]   (writes competition format, angles in radians;
+#        TAUMAX = largest overlap tolerance tried by the tolerant fill, default 0.16)
 import json, math, os, random, sys, time
 sys.path.insert(0, os.environ.get('EVAND_PACKER', '/content/evand/search/packer'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,12 +45,13 @@ def search(n, s, secs, seed, wmin, wmax):
 def main():
     n, s, secs, seed = int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4])
     wmin, wmax, out = float(sys.argv[5]), float(sys.argv[6]), sys.argv[7]
+    taumax = float(sys.argv[8]) if len(sys.argv) > 8 else 0.16
     (c, prm), it = search(n, s, secs, seed, wmin, wmax)
     T = B.band(s, *prm)
     X = fillfast.fill(s, T, 'exact', time_limit=10)
     tau = 0.0
-    for t in (0.02, 0.04, 0.06, 0.08, 0.1, 0.13, 0.16):
-        if len(X) >= n:
+    for t in (0.02, 0.04, 0.06, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3):
+        if len(X) >= n or t > taumax + 1e-9:
             break
         tau = t
         X = fillfast.fill(s, T, 'exact', tau=t, time_limit=10)

@@ -19,6 +19,15 @@ on:
       hop_seeds:
         description: parallel hop seeds per task
         default: "4"
+      engine:
+        description: relaxer (sq10_hop HOP_ENGINE) - quenchhop (fq quench + packer hop) or quench (fq quench only, flags in hop_args)
+        default: "quenchhop"
+      hop_args:
+        description: fq / packer options for the relaxer (engine quench, round15p5 = --loosen 1.0 --round-r0 0.15 --round-compress --round-press --round-steps 5 --round-press-outer 30)
+        default: ""
+      tau_max:
+        description: largest overlap tolerance of the tolerant fill in bandseed.py
+        default: "0.16"
 
 permissions:
   contents: write
@@ -48,7 +57,7 @@ jobs:
           TAG="b${N}_${S}_${SD}"; echo "TAG=$TAG" >> $GITHUB_ENV
           mkdir -p out slices
           EVAND_PACKER=$GITHUB_WORKSPACE/evand/search/packer timeout $(( ${{ inputs.search_min }} * 60 + 600 )) \
-          python3 -u design/bandseed.py $N $S $(( ${{ inputs.search_min }} * 60 )) $SD $W0 $W1 out/${TAG}_seed.csv 2>&1 | tee out/$TAG.log | tail -5
+          python3 -u design/bandseed.py $N $S $(( ${{ inputs.search_min }} * 60 )) $SD $W0 $W1 out/${TAG}_seed.csv ${{ inputs.tau_max }} 2>&1 | tee out/$TAG.log | tail -5
           echo "::notice title=$TAG seed::$(grep BANDSEED out/$TAG.log | cut -c1-600)"
       - name: relax the seed
         run: |
@@ -59,7 +68,7 @@ jobs:
           PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
           SQ_IN=$GITHUB_WORKSPACE/slices SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
           SQ_WORKERS=$(nproc) SQ_MAXC=40 SQ_DEDUP=0 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.hop_seeds }} HOP_SEED0=900 \
-          HOP_NTARGET=1000 HOP_BUDGET_H=5 FQ_DEADLINE=300 HOP_ENGINE=quenchhop \
+          HOP_NTARGET=1000 HOP_BUDGET_H=5 FQ_DEADLINE=300 HOP_ENGINE=${{ inputs.engine }} HOP_ARGS="${{ inputs.hop_args }}" \
           timeout $(( ${{ inputs.hop_min }} * 60 + 1800 )) \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/${TAG}_relaxed.csv | grep -v "^SIDES" | tee -a $GITHUB_WORKSPACE/out/$TAG.log | tail -15 || true
       - uses: actions/upload-artifact@v4
