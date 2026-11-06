@@ -70,9 +70,9 @@ jobs:
         run: |
           mkdir -p seeds_in out
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds_in/$n"; gunzip -c "$f" > "seeds_in/$n/submission.csv"; done
-          cd hop
+          cd hop && set -o pipefail
           LB_TOOLS=$GITHUB_WORKSPACE/lbtools FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq SQ_IN=$GITHUB_WORKSPACE/seeds_in SQ_BOARD=board_29oct.txt \
-          set -o pipefail; timeout 20000 python3 -u lband_run.py $GITHUB_WORKSPACE/out/lband_${{ matrix.slice }}.csv --slice ${{ matrix.slice }} --slices ${{ inputs.slices }} \
+          timeout 20000 python3 -u lband_run.py $GITHUB_WORKSPACE/out/lband_${{ matrix.slice }}.csv --slice ${{ matrix.slice }} --slices ${{ inputs.slices }} \
             --kmin ${{ inputs.kmin }} --phases ${{ inputs.phases }} --workers $(nproc) ${{ inputs.args }} 2>&1 | tee $GITHUB_WORKSPACE/out/lband_${{ matrix.slice }}.log | grep -E "^n=|LBAND|targets|rror"
           echo "::notice title=slice ${{ matrix.slice }}::$(grep LBAND out/lband_${{ matrix.slice }}.log 2>/dev/null | cut -c1-900 || grep LBAND $GITHUB_WORKSPACE/out/lband_${{ matrix.slice }}.log | cut -c1-900)"
       - uses: actions/upload-artifact@v4
