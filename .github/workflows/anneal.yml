@@ -1,0 +1,155 @@
+name: anneal
+# Perturb-and-shrink annealer (design/anneal.py, JAX on CPU) on rigid band seeds or on our own packings. Per task
+# "n:S:seed:wmin:wmax" a band seed is built with design/bandseed.py (exact upright fill; S = box side of the seed, use a
+# side ABOVE our packing so the seed is rigid and feasible), or with "n:ours" the start is our current packing of n.
+# Each task runs several annealer seeds in parallel for hop_min minutes; the publish job certifies every result against
+# our packings (sq09 certify), commits the improvements to results/ and publishes release anneal-N.
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: JSON list of "n:S:seed:wmin:wmax" (band seed) or "n:ours" (start from our packing)
+        default: '["498:23.05:12:5.5:8", "498:23.15:13:5.5:8", "498:22.95:14:3.5:5.5", "498:ours", "544:23.95:21:3.5:5.5", "544:ours"]'
+      search_min:
+        description: band search minutes per task (band seeds only)
+        default: "6"
+      hop_min:
+        description: annealer minutes per task
+        default: "150"
+      seeds:
+        description: parallel annealer seeds per task
+        default: "2"
+      args:
+        description: extra anneal.py options (e.g. --r0 0.15 --ds 0.003 --kicks 8 --sigma 0.08)
+        default: "--r0 0.15 --ds 0.003 --kicks 8 --sigma 0.08"
+
+permissions:
+  contents: write
+
+jobs:
+  anneal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJson(inputs.tasks) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: python deps
+        run: pip install -q numpy scipy mpmath jax jaxlib
+      - name: fetch fillfast (evand, pinned)
+        run: |
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d && git sparse-checkout set --no-cone "/search/packer/*.py"
+      - name: seed ${{ matrix.task }}
+        run: |
+          IFS=: read N S SD W0 W1 <<< "${{ matrix.task }}"
+          mkdir -p out
+          if [ "$S" = ours ]; then
+            TAG="a${N}_ours"
+            for f in seeds/*.csv.gz results/*.csv.gz; do gunzip -c "$f"; done | awk -F, -v n=$N 'NR==1 || $2==n' > out/all_$N.csv
+            python3 - "$N" out/all_$N.csv out/${TAG}_seed.csv <<'EOF'
+          import csv, math, sys, collections
+          n, inp, out = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+          # the gunzipped files are concatenated (header lines dropped by awk except the first): split into packings of n rows
+          rows = [r for r in csv.DictReader(open(inp))]
+          packs = [rows[i:i + n] for i in range(0, len(rows), n)]
+          def side(p):
+              xs = []; ys = []
+              for r in p:
+                  x, y, a = float(r['x']), float(r['y']), float(r['angle']); c, s = math.cos(a), math.sin(a)
+                  for dx, dy in ((.5, .5), (.5, -.5), (-.5, .5), (-.5, -.5)):
+                      xs.append(x + c * dx - s * dy); ys.append(y + s * dx + c * dy)
+              return max(max(xs) - min(xs), max(ys) - min(ys))
+          packs = [p for p in packs if len(p) == n]
+          best = min(packs, key=side)
+          with open(out, 'w') as f:
+              f.write('id,n,square_id,x,y,angle\n')
+              for i, r in enumerate(best):
+                  f.write('%d,%d,%d,%s,%s,%s\n' % (i, n, i, r['x'], r['y'], r['angle']))
+          print('ours', n, 'side %.6f' % side(best))
+          EOF
+          else
+            TAG="a${N}_${S}_${SD}"
+            EVAND_PACKER=$GITHUB_WORKSPACE/evand/search/packer timeout $(( ${{ inputs.search_min }} * 60 + 600 )) \
+            python3 -u design/bandseed.py $N $S $(( ${{ inputs.search_min }} * 60 )) $SD $W0 $W1 out/${TAG}_seed.csv 0.0 2>&1 | tee out/$TAG.log | tail -3
+          fi
+          echo "TAG=$TAG" >> $GITHUB_ENV; echo "N=$N" >> $GITHUB_ENV
+          [ -f out/${TAG}_seed.csv ] || echo "no seed"
+      - name: anneal
+        run: |
+          [ -f out/${TAG}_seed.csv ] || { echo "no seed"; exit 0; }
+          export JAX_PLATFORMS=cpu XLA_FLAGS="--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=2" OMP_NUM_THREADS=2
+          for k in $(seq 1 ${{ inputs.seeds }}); do
+            timeout $(( ${{ inputs.hop_min }} * 60 + 900 )) python3 -u design/anneal.py out/${TAG}_seed.csv $N out/${TAG}_s${k}.csv \
+              --minutes ${{ inputs.hop_min }} --seed $k ${{ inputs.args }} --log out/${TAG}_s${k}.log > /dev/null 2>&1 &
+          done
+          wait
+          grep -h ANNEAL out/${TAG}_s*.log || true
+          echo "::notice title=$TAG::$(grep -h ANNEAL out/${TAG}_s*.log | tr '\n' ' ' | cut -c1-900)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.TAG }}
+          path: out/
+          retention-days: 14
+
+  publish:
+    needs: anneal
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certify, compare with ours, keep the improvements
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p slices out ours
+          for d in parts/*/; do t=$(basename "$d"); cat "$d"/*.log > "out/$t.log" 2>/dev/null || true
+            for f in "$d"/*_s[0-9]*.csv; do [ -f "$f" ] || continue; mkdir -p "slices/$(basename "$f" .csv)"; cp "$f" "slices/$(basename "$f" .csv)/submission.csv"; done
+          done
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          python3 - <<'EOF' | tee out/summary.txt
+          import csv, glob, math, os, collections
+          def sides(p):
+              d = collections.defaultdict(list)
+              for r in csv.DictReader(open(p)):
+                  d[int(r['n'])].append((float(r['x']), float(r['y']), float(r['angle'])))
+              out = {}
+              for n, q in d.items():
+                  xs = []; ys = []
+                  for x, y, a in q:
+                      c, s = math.cos(a), math.sin(a)
+                      for dx, dy in ((.5, .5), (.5, -.5), (-.5, .5), (-.5, -.5)):
+                          xs.append(x + c * dx - s * dy); ys.append(y + s * dx + c * dy)
+                  out[n] = (len(q), max(max(xs) - min(xs), max(ys) - min(ys)))
+              return out
+          best = {}
+          for p in glob.glob('ours/*/submission.csv'):
+              for n, (k, s) in sides(p).items():
+                  if k == n and (n not in best or s < best[n]): best[n] = s
+          for p in sorted(glob.glob('parts/*/*.csv')):
+              if '_s' not in os.path.basename(p) and '_seed' not in os.path.basename(p): continue
+              for n, (k, s) in sides(p).items():
+                  if k == n: print('%s n=%d side=%.6f ours=%.6f diff=%+.6f (uncertified bbox)' % (os.path.basename(p), n, s, best.get(n, 0), s - best.get(n, 0)))
+          EOF
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            gzip -9 -c out/improved.csv > "results/anneal_$(date +%m%d)_${{ github.run_number }}.csv.gz"
+            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
+            git add results/ && git commit -q -m "results: anneal ${{ github.run_number }}" || true
+            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            echo "::notice title=improved::$(tail -2 out/merge.log | tr '\n' ' ' | cut -c1-500)"
+          else
+            echo "::notice title=improved::none"
+          fi
+          gh release create "anneal-${{ github.run_number }}" out/summary.txt out/merge.log out/a*.log --title "anneal ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}, ${{ inputs.hop_min }} min, args ${{ inputs.args }}" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
+          echo "::notice title=summary::$(cat out/summary.txt | tr '\n' ' ' | cut -c1-1500)"
