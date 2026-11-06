@@ -47,6 +47,8 @@ SCHEDS = {
     'loose1015k': ['--loosen', '1.015', '--kick', '0.01'],
 }
 SCHED_NAMES = [s for s in os.environ.get('PO_SCHED', 'deep').split(',') if s]
+if os.environ.get('PO_SEED'):   # a different fq seed per round, so the kick and tie-breaks differ between rounds
+    SCHEDS = {k: v + ['--seed', os.environ['PO_SEED']] for k, v in SCHEDS.items()}
 T0 = time.time()
 
 

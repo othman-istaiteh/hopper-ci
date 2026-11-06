@@ -77,7 +77,7 @@ jobs:
           PER=$(( (T + J - 1) / J )); SKIP=$(( ${{ inputs.skip }} + S * PER ))
           echo "slice $S: targets $SKIP .. $((SKIP + PER))"
           FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
-          PO_DESCEND=$([ "${{ inputs.descend }}" = yes ] && echo $GITHUB_WORKSPACE/evand/search/exact/descend.py) PO_SCHED=${{ inputs.sched }} \
+          PO_DESCEND=$([ "${{ inputs.descend }}" = yes ] && echo $GITHUB_WORKSPACE/evand/search/exact/descend.py) PO_SCHED=${{ inputs.sched }} PO_SEED=${{ github.run_number }} \
           SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
           SQ_WORKERS=$(nproc) PO_DEADLINE=${{ inputs.deadline }} PO_NTARGET=$PER PO_SKIP=$SKIP \
           PO_DESC_TIMEOUT=600 PO_BUDGET_H=5.0 \
