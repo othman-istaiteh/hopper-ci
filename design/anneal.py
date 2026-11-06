@@ -101,7 +101,8 @@ def main():
     ap.add_argument('--minutes', type=float, default=20.0)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--r0', type=float, default=0.15, help='initial corner radius of the rounded squares')
-    ap.add_argument('--ds', type=float, default=0.002, help='box shrink per accepted step')
+    ap.add_argument('--ds', type=float, default=0.002, help='box shrink per accepted step (halved on failure down to ds_min before kicking)')
+    ap.add_argument('--ds-min', type=float, default=2e-4)
     ap.add_argument('--kicks', type=int, default=12, help='kicks tried at a side before giving up on it')
     ap.add_argument('--sigma', type=float, default=0.08, help='kick size (positions; angles get sigma radians)')
     ap.add_argument('--smin', type=float, default=0.0, help='stop when a feasible rigid packing at or below this side is found')
@@ -133,15 +134,16 @@ def main():
     say(f'feasible at S={S:.6f} (rounded r={r:.3f}) after {k_up} growth steps, {time.time() - t0:.0f}s')
     best_rigid = None                                   # (S, p) with r = 0 and E <= tol
     feas = (S, p.copy(), r)                             # last feasible (S, p) at radius r
-    steps = 0; fails = 0; stalls = 0
+    steps = 0; fails = 0; stalls = 0; cur_ds = A.ds
     deadline = t0 + A.minutes * 60
     # hardening plan: r goes from r0 to 0 over the run; at every stall we also harden a little
     while time.time() < deadline:
         steps += 1
-        S_try = feas[0] - A.ds
+        S_try = feas[0] - cur_ds
         p_try, e = descend(vg, feas[1], S_try, r)
         if e <= A.tol:
             feas = (S_try, p_try, r); fails = 0
+            if cur_ds < A.ds: cur_ds = min(A.ds, cur_ds * 2)
             if r == 0.0 and (best_rigid is None or S_try < best_rigid[0]):
                 best_rigid = (S_try, p_try.copy())
                 if A.smin and S_try <= A.smin:
@@ -149,7 +151,10 @@ def main():
             if steps % 10 == 0:
                 say(f'step {steps} S={S_try:.6f} r={r:.3f} E={e:.1e} {time.time() - t0:.0f}s')
             continue
-        # infeasible at S_try: kick the last feasible state (biggest kicks where the penetration load is largest)
+        # infeasible at S_try: first take smaller steps, then kick the last feasible state (biggest kicks where the
+        # penetration load is largest)
+        if cur_ds > A.ds_min:
+            cur_ds = max(A.ds_min, cur_ds / 2); continue
         fails += 1
         if fails <= A.kicks:
             L = np.asarray(loads(jnp.asarray(p_try), S_try, r)); L = L / (L.max() + 1e-300)
@@ -160,13 +165,13 @@ def main():
             q[:n] = np.clip(q[:n], 0.5, S_try - 0.5); q[n:2 * n] = np.clip(q[n:2 * n], 0.5, S_try - 0.5)
             q, e2 = descend(vg, q, S_try, r, maxiter=800)
             if e2 <= A.tol:
-                feas = (S_try, q, r); fails = 0
+                feas = (S_try, q, r); fails = 0; cur_ds = A.ds
                 if r == 0.0 and (best_rigid is None or S_try < best_rigid[0]):
                     best_rigid = (S_try, q.copy())
                 say(f'kick ok at S={S_try:.6f} r={r:.3f} ({fails} fails) {time.time() - t0:.0f}s')
             continue
         # stalled at this radius: harden (r down), re-settle at the current feasible side
-        stalls += 1; fails = 0
+        stalls += 1; fails = 0; cur_ds = A.ds
         if r > 0.0:
             r_new = max(0.0, r - max(0.02, r * 0.35))
             q, e3 = descend(vg, feas[1], feas[0], r_new, maxiter=2000)
