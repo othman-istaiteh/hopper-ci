@@ -1,0 +1,41 @@
+name: fetch_ds
+# Fetch files of a public Kaggle dataset with the Kaggle CLI (read only) and publish them as release assets ds-<run>,
+# so the sandbox (which has no Kaggle token and cannot reach the artifact store) can read data files such as JSON packings.
+on:
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: owner/dataset
+        default: "az05192000gmailcom/squares-in-squares-l-band-packings"
+      files:
+        description: comma-separated file names (data files only, no executables)
+        default: "leader_packings.json"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: python deps
+        run: pip install -q kaggle
+      - name: download and publish
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token"; exit 1; fi
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          mkdir -p ds && cd ds
+          IFS=, read -ra FILES <<< "${{ inputs.files }}"
+          for f in "${FILES[@]}"; do
+            case "$f" in *.json|*.csv|*.txt|*.gz|*.zip|*.py|*.md) ;; *) echo "skip $f (not a data or text file)"; continue;; esac
+            for t in 1 2 3; do kaggle datasets download "${{ inputs.dataset }}" -f "$f" -p . --unzip > dl.log 2>&1 && break; sleep $((t * 15)); done
+          done
+          ls -la
+          cd .. && gh release create "ds-${{ github.run_number }}" ds/* --title "dataset files ${{ github.run_number }}" --notes "${{ inputs.dataset }}: ${{ inputs.files }}"
