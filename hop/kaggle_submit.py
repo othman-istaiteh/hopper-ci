@@ -5,8 +5,8 @@
 import base64, csv, datetime, io, json, os, re, subprocess, sys
 
 COMP = os.environ.get('KAGGLE_COMP') or base64.b64decode('c3F1YXJlcy1pbi1zcXVhcmVz').decode()
-MAX_PER_DAY = int(os.environ.get('KAGGLE_MAX_PER_DAY', '8'))
-MIN_GAIN = float(os.environ.get('KAGGLE_MIN_GAIN', '1e-5'))  # do not spend a submission on noise-level gains
+MAX_PER_DAY = int(os.environ.get('KAGGLE_MAX_PER_DAY', '2'))  # 6 Nov: at most 2 automatic submissions a day, the rest stays for hand use
+MIN_GAIN = float(os.environ.get('KAGGLE_MIN_GAIN', '2e-4'))  # 6 Nov: only gains worth a few ranks (was 1e-5)
 
 
 def sh(args):
