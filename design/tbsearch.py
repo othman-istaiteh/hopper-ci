@@ -2,7 +2,8 @@
 # plus hill climbing over the band lengths h1, h2, the lattice phases q1, q2, the wall offsets x01, x02 in {0, 1} and the
 # mirror flags m1, m2 (rows up-right or down-right) and the bend positions ys1, ys2 (0 = straight band).
 # Usage: python3 tbsearch.py N L SECONDS SEED N1LIST N2LIST OUTPREFIX [INIT_best.json]   (N1LIST like 5,6,7; writes
-# OUTPREFIX_best.json and the best packings OUTPREFIX_<count>_<k>.csv in competition format; INIT continues an earlier run)
+# OUTPREFIX_best.json and the best packings OUTPREFIX_<count>_<k>.csv in competition format; INIT continues an earlier run;
+# TB_LEDGES=1 in the environment adds twoblock's ledge candidates, 5x slower per assembly)
 import json, math, os, random, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import twoblock as T
@@ -14,7 +15,7 @@ def evaluate(n, L, prm, cache):
         return cache[key][0]
     N1, h1, q1, N2, h2, q2, x01, x02, m1, m2, ys1, ys2 = prm
     cnt, P, info = T.build(n, L, int(N1), h1, q1, int(N2), h2, q2, None, None, x01, x02, int(m1), int(m2), time_limit=10.0,
-                           ys1=ys1 if ys1 > 0 else None, ys2=ys2 if ys2 > 0 else None)
+                           ys1=ys1 if ys1 > 0 else None, ys2=ys2 if ys2 > 0 else None, ledges=os.environ.get('TB_LEDGES') == '1')
     cache[key] = (cnt, P)
     return cnt
 
@@ -27,8 +28,9 @@ def search(n, L, secs, seed, n1s, n2s, prefix, init=None):
         for e in json.load(open(init))['best']:
             p = list(e['prm']) + [0.0] * (12 - len(e['prm']))
             if (int(p[0]), int(p[3])) not in best and e['count'] > 0:
-                best[(int(p[0]), int(p[3]))] = (e['count'], p)
-                cache[tuple(round(v, 4) for v in p)] = (e['count'], None)
+                c0 = evaluate(n, L, p, cache)  # re-evaluated: the earlier run may have used another L
+                if c0 > 0:
+                    best[(int(p[0]), int(p[3]))] = (c0, p)
     t0 = time.time()
     it = 0
     f = L - math.floor(L + 1e-9)
@@ -93,7 +95,7 @@ def search(n, L, secs, seed, n1s, n2s, prefix, init=None):
         P = cache[key][1]
         if P is None:
             P = T.build(n, L, int(p[0]), p[1], p[2], int(p[3]), p[4], p[5], None, None, p[6], p[7], int(p[8]), int(p[9]),
-                        ys1=p[10] if p[10] > 0 else None, ys2=p[11] if p[11] > 0 else None)[1]
+                        ys1=p[10] if p[10] > 0 else None, ys2=p[11] if p[11] > 0 else None, ledges=os.environ.get('TB_LEDGES') == '1')[1]
         T.write_csv(P, '%s_%d_%d.csv' % (prefix, c, k), n)
     print('DONE n %d L %.4f iters %d best %s' % (n, L, it, [(c, [round(v, 3) for v in p]) for c, p in allbest[:8]]), flush=True)
 

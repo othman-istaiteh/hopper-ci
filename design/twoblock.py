@@ -119,7 +119,7 @@ def upright_candidates(L, f, offsets=None):
 
 
 def build(n, L, N1, h1, q1, N2, h2, q2, f1p=None, f2p=None, x01=0.0, x02=0.0, m1=0, m2=0, fix_margin=2.5, time_limit=20.0,
-          offsets=None, ext=0.0, ys1=None, ys2=None, verbose=False):
+          offsets=None, ext=0.0, ys1=None, ys2=None, ledges=False, verbose=False):
     f = L - math.floor(L + 1e-9)
     if f1p is None:
         f1p = f
@@ -167,6 +167,28 @@ def build(n, L, N1, h1, q1, N2, h2, q2, f1p=None, f2p=None, x01=0.0, x02=0.0, m1
                         return -1, [], dict(t1=t1, t2=t2, fail='fixed overlap')
     # free band squares that hit fixed squares are dropped
     fx = [sq for sq in free if not hits_fixed(sq)]
+    if ledges:
+        # extra upright candidates sitting on the corners of the free band squares (off the wall grids), with the wall
+        # grid in the other coordinate or corner-aligned in both; pairwise constraints handle them
+        K = int(math.floor(L + 1e-9))
+        gl = sorted(set(round(i + 0.5 + o, 9) for i in range(K + 1) for o in (0.0, f) if i + 1 + o <= L + 1e-9))
+        extra = set()
+        for X, Y, t in list(free):
+            c, s_ = math.cos(t), math.sin(t)
+            for ax, ay in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                cx, cy = X + 0.5 * (ax * c - ay * s_), Y + 0.5 * (ax * s_ + ay * c)
+                for px in (cx - 0.5, cx + 0.5):
+                    for py in [cy - 0.5, cy + 0.5] + [g for g in gl if abs(g - cy) < 2.0]:
+                        extra.add((round(px, 6), round(py, 6)))
+                for py in (cy - 0.5, cy + 0.5):
+                    for px in [g for g in gl if abs(g - cx) < 2.0]:
+                        extra.add((round(px, 6), round(py, 6)))
+        for px, py in extra:
+            if px - 0.5 < -TOL or px + 0.5 > L + TOL or py - 0.5 < -TOL or py + 0.5 > L + TOL:
+                continue
+            sq = (px, py, 0.0)
+            if not hits_fixed(sq):
+                fx.append(sq)
     cands = [sq for sq in cands if not hits_fixed(sq)]
     var = fx + cands
     nf = len(fx)
@@ -260,6 +282,7 @@ if __name__ == '__main__':
         fv = float(args[1]) - math.floor(float(args[1]) + 1e-9)
         offsets = [0.0, fv / 4, fv / 2, 3 * fv / 4, fv]
     ext = 1.5 if '--ext' in sys.argv else 0.0  # band lattice squares up to 1.5 beyond the band length as free candidates
+    ledges = '--ledges' in sys.argv  # upright candidates on the corners of the band end squares (off the wall grids)
     n, L = int(args[0]), float(args[1])
     N1, h1, q1, N2, h2, q2 = int(args[2]), float(args[3]), float(args[4]), int(args[5]), float(args[6]), float(args[7])
     extra = [float(a) for a in args[8:16]]
@@ -273,7 +296,7 @@ if __name__ == '__main__':
     ys2 = extra[7] if len(extra) > 7 and extra[7] > 0 else None
     t0 = time.time()
     cnt, P, info = build(n, L, N1, h1, q1, N2, h2, q2, f1p, f2p, x01, x02, m1, m2, offsets=offsets, ext=ext, ys1=ys1, ys2=ys2,
-                         time_limit=120.0)
+                         ledges=ledges, time_limit=120.0)
     bad, oob = check(P, L)
     print('count %d (need %d) t1 %.2f deg t2 %.2f deg overlaps %d outside %d time %.1fs info %s' %
           (cnt, n, math.degrees(info['t1']), math.degrees(info['t2']), bad, oob, time.time() - t0, info))
