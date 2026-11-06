@@ -176,15 +176,22 @@ jobs:
             # code search finds repositories of new accounts whatever their name (submission header, competition keywords)
             for c in '"id,n,square_id,x,y,angle"' '"square_id,x,y,angle"' '"square_id" packing unit squares' "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d) kaggle" 'filename:submission.csv square_id' 'extension:cert packing squares'; do
               for pg in $(seq 1 $PAGES); do
-                gh api -X GET search/code -f q="$c" -f per_page=100 -f page=$pg --jq '.items[].repository|select(.fork|not)|.full_name' 2> cs_err.txt | tee -a cs_hits.txt || echo "::warning::code search failed: $(head -c 200 cs_err.txt)"; sleep 7
+                # gh api prints the error body (a 429 JSON) on stdout, so keep the output only on success; retry on a rate limit
+                for a in 1 2 3; do
+                  if gh api -X GET search/code -f q="$c" -f per_page=100 -f page=$pg --jq '.items[].repository|select(.fork|not)|.full_name' > cs_one.txt 2> cs_err.txt; then
+                    grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' cs_one.txt | tee -a cs_hits.txt; break
+                  fi
+                  if grep -q 429 cs_err.txt cs_one.txt; then echo "code search 429 on '$c' page $pg, attempt $a" >> cs_warn.txt; sleep $((70 * a)); else echo "code search failed on '$c': $(head -c 200 cs_err.txt)" >> cs_warn.txt; break; fi
+                done; sleep 10
               done
             done
             # known sources that publish packings as .csv.gz or JSON outside the code-search index
             echo yugavka/square_in_squares; echo sosudo/squares_in_squares; echo TheSnakeFang/squarepack-certs
-          } | sort -u > hits.txt || true
+          } | grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' | sort -u > hits.txt || true
+          [ -s cs_warn.txt ] && echo "::warning title=code search::$(tr '\n' ' ' < cs_warn.txt | cut -c1-600)"
           # keep packing-related names; code-search hits are kept whatever their name
           { grep -i -E "(squar.*pack|pack.*squar|squares?[-_]?in[-_]?squares?|square.?packing|squish|unit.?squares|n[0-9]+-square|s[0-9]+-(upper|lower)|square.*cert|kaggle.*squar|squar.*kaggle)" hits.txt; sort -u cs_hits.txt 2>/dev/null; } \
-            | sort -u | grep -v -i -E "^(othman-istaiteh|evand|Mishapolk|franciscouzo|dostashev|itsnaka|wand125|griffcass|jlevy)/|circle|sphere|bin-?pack|webpack|knapsack|sqpack(fs|tool)" | head -250 > repos.txt || true
+            | grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' | sort -u | grep -v -i -E "^(othman-istaiteh|evand|Mishapolk|franciscouzo|dostashev|itsnaka|wand125|griffcass|jlevy)/|circle|sphere|bin-?pack|webpack|knapsack|sqpack(fs|tool)" | head -250 > repos.txt || true
           echo "::notice title=ghsearch-count::$MODE: $(wc -l < hits.txt) hits, $(wc -l < repos.txt) repos kept, $(sort -u cs_hits.txt 2>/dev/null | wc -l) from code search"
           mkdir -p ours slices pubs out gx
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
