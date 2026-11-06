@@ -40,6 +40,11 @@ SCHEDS = {
     'round15c': ['--loosen', '1.0', '--round-r0', '0.15', '--round-compress'],
     'round15p5': ['--loosen', '1.0', '--round-r0', '0.15', '--round-compress', '--round-press', '--round-steps', '5', '--round-press-outer', '30'],
     'round25c': ['--loosen', '1.0', '--round-r0', '0.25', '--round-compress', '--round-steps', '40'],
+    # 3jeonghun's re-quench rounds (his notebook, 5 Nov): plain fq quench at loosen 1.005 to 1.05, sometimes a small kick;
+    # his two biggest moves (795, 910: 0.003 of side) came from --loosen 1.035
+    'loose1035': ['--loosen', '1.035'],
+    'loose1050': ['--loosen', '1.05'],
+    'loose1015k': ['--loosen', '1.015', '--kick', '0.01'],
 }
 SCHED_NAMES = [s for s in os.environ.get('PO_SCHED', 'deep').split(',') if s]
 T0 = time.time()
