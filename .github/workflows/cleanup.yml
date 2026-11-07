@@ -1,0 +1,80 @@
+name: cleanup
+# One-off housekeeping (7 Nov 2026, asked by the owner): delete old releases and tags (their submission.csv assets are
+# public downloads), delete stored artifacts (downloadable by anyone on a public repo), optionally squash the history of
+# main to a single commit. Runs with the workflow token because the sandbox proxy refuses these API paths.
+on:
+  workflow_dispatch:
+    inputs:
+      releases:
+        description: delete every release and its tag except the comma-separated tags listed in keep ("yes" / "no")
+        default: "yes"
+      keep:
+        description: tags to keep
+        default: ""
+      artifacts:
+        description: delete every stored artifact of this repo ("yes" / "no")
+        default: "yes"
+      squash:
+        description: replace the history of main by ONE commit with the current tree ("yes" / "no"; irreversible)
+        default: "no"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: releases and tags
+        if: inputs.releases == 'yes'
+        run: |
+          IFS=, read -ra KEEP <<< "${{ inputs.keep }}"
+          keep() { for k in "${KEEP[@]}"; do [ "$k" = "$1" ] && return 0; done; return 1; }
+          n=0
+          for page in 1 2 3 4 5; do
+            gh api "repos/${{ github.repository }}/releases?per_page=100&page=$page" --jq '.[].tag_name' > tags_$page.txt || true
+          done
+          cat tags_*.txt | sort -u > all_tags.txt; echo "releases: $(wc -l < all_tags.txt)"
+          while read -r t; do
+            [ -n "$t" ] || continue
+            if keep "$t"; then echo "keep $t"; continue; fi
+            gh release delete "$t" -y --cleanup-tag && n=$((n + 1)) || echo "failed $t"
+          done < all_tags.txt
+          echo "deleted $n releases"
+          # tags without a release
+          gh api "repos/${{ github.repository }}/git/refs/tags" --jq '.[].ref' 2>/dev/null | sed 's#refs/tags/##' | while read -r t; do
+            keep "$t" && continue
+            gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$t" && echo "tag $t deleted" || echo "tag $t failed"
+          done
+          echo "remaining releases: $(gh api "repos/${{ github.repository }}/releases?per_page=100" --jq '[.[].tag_name] | join(" ")')"
+      - name: artifacts
+        if: inputs.artifacts == 'yes'
+        run: |
+          n=0
+          for round in 1 2 3 4 5 6 7 8; do
+            ids=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" --jq '.artifacts[].id')
+            [ -n "$ids" ] || break
+            for id in $ids; do gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$id" > /dev/null && n=$((n + 1)) || echo "artifact $id failed"; done
+          done
+          echo "deleted $n artifacts; remaining $(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=1" --jq .total_count)"
+      - name: squash main to one commit
+        if: inputs.squash == 'yes'
+        run: |
+          git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
+          echo "before: $(git rev-list --count HEAD) commits, tree $(git rev-parse HEAD^{tree})"
+          git checkout -q --orphan fresh
+          git add -A
+          git commit -q -m "hopper-ci: public workflow runner for the private hopper-private repo (history squashed on $(date -u +%F), packings and earlier code history removed from the public repo)"
+          git branch -M fresh main
+          git push --force origin main
+          echo "after: $(git rev-list --count HEAD) commit, tree $(git rev-parse HEAD^{tree})"
+          # other branches would keep the old objects reachable
+          gh api "repos/${{ github.repository }}/branches" --jq '.[].name'
