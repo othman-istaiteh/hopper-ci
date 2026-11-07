@@ -63,8 +63,10 @@ jobs:
           for r in $(echo "$REFS" | tr ',' ' '); do
             i=$((i+1)); d="pub/$(echo "$r" | tr '/' '_')"; mkdir -p "$d"
             # packings typed into the notebook code (no output file needed): pull the source, parse literals only
-            mkdir -p "$d/src" && timeout 120 kaggle kernels pull "$r" -p "$d/src" > /dev/null 2>&1 && \
+            mkdir -p "$d/src" && timeout 120 kaggle kernels pull "$r" -m -p "$d/src" > /dev/null 2>&1 && \
               (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d/src" "$GITHUB_WORKSPACE/pubs" "emb$i") || true
+            # datasets the notebook reads (kernel-metadata.json): the keyword search misses names like "boxed-in"
+            python3 -I -c "import json,sys; m=json.load(open(sys.argv[1])); print('\n'.join(x for x in (m.get('dataset_sources') or []) if '/' in x))" "$d/src/kernel-metadata.json" >> ds_from_nb.txt 2>/dev/null || true
             rm -rf "$d/src"
             ok=0; for t in 1 2 3; do timeout 600 kaggle kernels output "$r" -p "$d" > ko.log 2>&1 && { ok=1; break; }; sleep $((t * 20)); done
             [ $ok = 1 ] || { echo "  $r: no output ($(tail -c 200 ko.log | tr '\n' ' '))"; rm -rf "$d"; continue; }
@@ -73,11 +75,12 @@ jobs:
           done
           # public datasets (searched by competition keywords, newest first, at most 20, each at most 1 GB)
           j=0
-          for q in "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "square packing"; do
-            for pg in $(seq 1 $(( (DS_TOP + 19) / 20 ))); do
-              kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --page $pg --csv 2>/dev/null | tail -n +2 | cut -d, -f1
-            done | head -n "$DS_TOP"
-          done | sort -u | grep / > dsets.txt || true
+          { for q in "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "square packing"; do
+              for pg in $(seq 1 $(( (DS_TOP + 19) / 20 ))); do
+                kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --page $pg --csv 2>/dev/null | tail -n +2 | cut -d, -f1
+              done | head -n "$DS_TOP"
+            done; cat ds_from_nb.txt 2>/dev/null; } | sort -u | grep / > dsets.txt || true
+          echo "datasets referenced by the notebooks: $(sort -u ds_from_nb.txt 2>/dev/null | tr '\n' ' ')"
           if [ -n "$DS_REFS" ]; then echo "$DS_REFS" | tr ',' '\n' | grep / > dsets.txt; fi
           echo "datasets: $(wc -l < dsets.txt)"
           for ds in $(cat dsets.txt); do
