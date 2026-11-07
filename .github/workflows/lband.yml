@@ -1,0 +1,159 @@
+name: lband
+# L-band sweep (hop/lband_run.py) around 3jeonghun's L-band builder (Kaggle dataset az05192000gmailcom/squares-in-squares-
+# l-band-packings, Apache 2.0: band_gen.py, lband.py, lband2.py; the band geometry and MILP assembly are ported from
+# lostdecimal27's notebook). Each slice job builds fq (evand, pinned), downloads the three builder files with the Kaggle
+# CLI, assembles L-bands for its share of the targets (puzzles with K >= kmin and a gap to the per-puzzle board), quenches
+# the assemblies that reach n and keeps the results below our side. The publish job certifies, commits improvements to
+# results/ and publishes release lband-N.
+on:
+  workflow_dispatch:
+    inputs:
+      slices:
+        description: number of parallel jobs (slices of the target list)
+        default: "8"
+      kmin:
+        description: smallest K = floor(sqrt n) to try (3jeonghun saw wins only at K >= 27)
+        default: "27"
+      phases:
+        description: phase grid per wall (P x P)
+        default: "5"
+      args:
+        description: extra lband_run.py options (--nmin 4 --nmax 8 --df=-0.003,0.004,0.010 --tl 15 --quench 60 --gapmin 0.004 --budget-h 4.5 --targets ...)
+        default: "--nmin 4 --nmax 8 --df=-0.003,0.004,0.010 --tl 15 --quench 60 --gapmin 0.004 --budget-h 4.5"
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          print("matrix=" + json.dumps({"slice": list(range(int("${{ inputs.slices }}")))}))
+          EOF
+
+  lband:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: python deps
+        run: pip install -q numpy scipy mpmath kaggle
+      - name: build fq (evand, pinned)
+        run: |
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock
+          cd search/packer && cargo build --release --bin fq 2>&1 | tail -1 && ls -la target/release/fq
+      - name: builder files from the Kaggle dataset (read only, Apache 2.0)
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token"; exit 1; fi
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          mkdir -p lbtools && cd lbtools
+          for f in band_gen.py lband.py lband2.py LICENSE_band_gen.txt; do
+            for t in 1 2 3; do kaggle datasets download az05192000gmailcom/squares-in-squares-l-band-packings -f $f -p . --unzip > dl.log 2>&1 && break; sleep $((t * 15)); done
+          done
+          ls -la; python3 -c "import ast,sys; [ast.parse(open(f).read()) for f in ('band_gen.py','lband.py','lband2.py')]; print('parsed')"
+      - name: sweep slice ${{ matrix.slice }}
+        run: |
+          mkdir -p seeds_in out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "seeds_in/$n"; gunzip -c "$f" > "seeds_in/$n/submission.csv"; done
+          cd hop && set -o pipefail
+          LB_TOOLS=$GITHUB_WORKSPACE/lbtools FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq SQ_IN=$GITHUB_WORKSPACE/seeds_in SQ_BOARD=board_29oct.txt \
+          timeout 20000 python3 -u lband_run.py $GITHUB_WORKSPACE/out/lband_${{ matrix.slice }}.csv --slice ${{ matrix.slice }} --slices ${{ inputs.slices }} \
+            --kmin ${{ inputs.kmin }} --phases ${{ inputs.phases }} --workers $(nproc) ${{ inputs.args }} 2>&1 | tee $GITHUB_WORKSPACE/out/lband_${{ matrix.slice }}.log | grep -E "^n=|LBAND|targets|rror"
+          echo "::notice title=slice ${{ matrix.slice }}::$(grep LBAND out/lband_${{ matrix.slice }}.log 2>/dev/null | cut -c1-900 || grep LBAND $GITHUB_WORKSPACE/out/lband_${{ matrix.slice }}.log | cut -c1-900)"
+      - name: seal the outputs (artifacts of a public repo are downloadable by anyone)
+        if: always()
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh seal out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lband-${{ matrix.slice }}
+          path: out.tar.enc
+          retention-days: 1
+
+  publish:
+    needs: lband
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main   # the latest main, not the dispatch-time commit: results committed during the run must be merged
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal parts
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certify, compare with ours, keep the improvements
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p slices out ours
+          for d in parts/*/; do t=$(basename "$d"); cat "$d"/*.log > "out/$t.log" 2>/dev/null || true
+            for f in "$d"/lband_*.csv; do [ -f "$f" ] || continue; mkdir -p "slices/$(basename "$f" .csv)"; cp "$f" "slices/$(basename "$f" .csv)/submission.csv"; done
+          done
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          python3 - <<'EOF' | tee out/summary.txt
+          import csv, glob, math, os, collections
+          def sides(p):
+              d = collections.defaultdict(list)
+              for r in csv.DictReader(open(p)):
+                  d[int(r['n'])].append((float(r['x']), float(r['y']), float(r['angle'])))
+              out = {}
+              for n, q in d.items():
+                  xs = []; ys = []
+                  for x, y, a in q:
+                      c, s = math.cos(a), math.sin(a)
+                      for dx, dy in ((.5, .5), (.5, -.5), (-.5, .5), (-.5, -.5)):
+                          xs.append(x + c * dx - s * dy); ys.append(y + s * dx + c * dy)
+                  out[n] = (len(q), max(max(xs) - min(xs), max(ys) - min(ys)))
+              return out
+          best = {}
+          for p in glob.glob('ours/*/submission.csv'):
+              for n, (k, s) in sides(p).items():
+                  if k == n and (n not in best or s < best[n]): best[n] = s
+          for p in sorted(glob.glob('parts/*/*.csv')):
+                            for n, (k, s) in sides(p).items():
+                  if k == n: print('%s n=%d side=%.6f ours=%.6f diff=%+.6f (uncertified bbox)' % (os.path.basename(p), n, s, best.get(n, 0), s - best.get(n, 0)))
+          EOF
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/lband_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: lband ${{ github.run_number }}" "$F"
+            echo "::notice title=improved::$(tail -2 out/merge.log | tr '\n' ' ' | cut -c1-500)"
+          else
+            echo "::notice title=improved::none"
+          fi
+          gh release create "lband-${{ github.run_number }}" out/summary.txt out/merge.log out/*.log --title "lband ${{ github.run_number }}" --notes "slices ${{ inputs.slices }}, kmin ${{ inputs.kmin }}, phases ${{ inputs.phases }}, args ${{ inputs.args }}" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
+          echo "::notice title=summary::$(cat out/summary.txt | tr '\n' ' ' | cut -c1-1500)"

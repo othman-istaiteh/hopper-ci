@@ -1,0 +1,239 @@
+name: harvest
+# Daily harvest of public notebook outputs (Kaggle API): download the outputs of the most recent and the most voted
+# public notebooks of the competition (or an explicit list), certify-merge them against our seeds + results, and commit
+# the puzzles that beat ours as results/harvest_<date>.csv.gz (picked up by every later merge). Release harvest-<n>.
+on:
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: comma-separated notebook refs (user/slug); empty = top recent + top voted from the kernel listings
+        default: ""
+      top:
+        description: how many notebooks from each listing when refs is empty
+        default: "15"
+      wide:
+        description: "yes = GitHub search over all repositories whatever their age (otherwise only the 06 UTC run is wide)"
+        default: "no"
+      ds_refs:
+        description: comma-separated dataset refs (owner/slug) to read instead of the keyword search
+        default: ""
+      ds_top:
+        description: how many datasets per keyword search, newest first (20 per page; use 200 for a full sweep)
+        default: "10"
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: python deps
+        run: pip install -q numpy mpmath kaggle
+      - name: download public outputs
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          REFS: ${{ inputs.refs }}
+          TOP: ${{ inputs.top }}
+          DS_TOP: ${{ inputs.ds_top || '10' }}
+          DS_REFS: ${{ inputs.ds_refs }}
+        run: |
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          COMP=$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d)
+          mkdir -p pub pubs slices out
+          if [ -z "$REFS" ]; then
+            T=${TOP:-30}
+            kaggle kernels list --competition "$COMP" --sort-by dateRun --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 > refs.txt
+            kaggle kernels list --competition "$COMP" --sort-by voteCount --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 >> refs.txt
+            kaggle kernels list --competition "$COMP" --sort-by scoreAscending --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 >> refs.txt
+            REFS=$(sort -u refs.txt | grep / | tr '\n' ',')
+          fi
+          echo "refs: $REFS"
+          i=0
+          for r in $(echo "$REFS" | tr ',' ' '); do
+            i=$((i+1)); d="pub/$(echo "$r" | tr '/' '_')"; mkdir -p "$d"
+            # packings typed into the notebook code (no output file needed): pull the source, parse literals only
+            mkdir -p "$d/src" && timeout 120 kaggle kernels pull "$r" -m -p "$d/src" > /dev/null 2>&1 && \
+              (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d/src" "$GITHUB_WORKSPACE/pubs" "emb$i") || true
+            # datasets the notebook reads (kernel-metadata.json): the keyword search misses names like "boxed-in"
+            python3 -I -c "import json,sys; m=json.load(open(sys.argv[1])); print('\n'.join(x for x in (m.get('dataset_sources') or []) if '/' in x))" "$d/src/kernel-metadata.json" >> ds_from_nb.txt 2>/dev/null || true
+            rm -rf "$d/src"
+            ok=0; for t in 1 2 3; do timeout 600 kaggle kernels output "$r" -p "$d" > ko.log 2>&1 && { ok=1; break; }; sleep $((t * 20)); done
+            [ $ok = 1 ] || { echo "  $r: no output ($(tail -c 200 ko.log | tr '\n' ' '))"; rm -rf "$d"; continue; }
+            echo "  $r:"; (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "pub$i") || true
+            rm -rf "$d"
+          done
+          # public datasets (searched by competition keywords, newest first, at most 20, each at most 1 GB)
+          j=0
+          { for q in "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "square packing" "squares"; do
+              for pg in $(seq 1 $(( (DS_TOP + 19) / 20 ))); do
+                kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --page $pg --csv 2>/dev/null | tail -n +2 | cut -d, -f1
+              done | head -n "$DS_TOP"
+            done; cat ds_from_nb.txt 2>/dev/null; } | sort -u | grep / > dsets.txt || true
+          echo "datasets referenced by the notebooks: $(sort -u ds_from_nb.txt 2>/dev/null | tr '\n' ' ')"
+          if [ -n "$DS_REFS" ]; then echo "$DS_REFS" | tr ',' '\n' | grep / > dsets.txt; fi
+          echo "datasets: $(wc -l < dsets.txt)"
+          for ds in $(cat dsets.txt); do
+            j=$((j+1)); d="pub/ds_$j"; mkdir -p "$d"
+            ok=0; for t in 1 2 3; do timeout 2400 kaggle datasets download "$ds" -p "$d" --unzip > dl.log 2>&1 && { ok=1; break; }; sleep $((t * 20)); done
+            [ $ok = 1 ] || { echo "  dataset $ds: download failed ($(tail -c 200 dl.log | tr '\n' ' '))"; rm -rf "$d"; continue; }
+            echo "  dataset $ds:"; (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "ds$j") || true
+            rm -rf "$d"
+          done
+          mkdir -p ours
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          # keep only the public puzzles that beat ours (memory: dozens of full submissions killed the merge on 31 Oct)
+          mkdir -p pubs && (cd hop && python3 prefilter.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/pubs)
+          for d in pubs/*/; do [ -d "$d" ] && mv "$d" slices/; done
+          ls slices | wc -l
+      - name: certified merge and keep the improvements
+        run: |
+          cd hop
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+          python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -8
+          python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log
+      - name: commit and publish
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/harvest_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: public harvest $(date +%F)" "$F"
+          else
+            echo "nothing beats our packings"
+          fi
+          gh release create "harvest-${{ github.run_number }}" out/merge.log --title "harvest ${{ github.run_number }}" --notes "public notebook outputs" || true
+
+  certs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: clone the certificate repositories (read only, sparse)
+        run: |
+          mkdir -p ext && cd ext
+          sp() { git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$1.git" "$2" && (cd "$2" && git sparse-checkout set --no-cone $3) || echo "clone $1 failed"; }
+          sp evand/square-packing evand "/search/packer/candidates/ /certificates/"
+          sp Mishapolk/square-packing-records mishapolk "/certificates/"
+          sp franciscouzo/square-packing couzo "/certificates/"
+          sp dostashev/square-packing ostashev "/"
+          sp itsnaka/squish-certs itsnaka "/"
+          sp wand125/square-packing wand125 "/"
+          sp griffcass/square-packing griffcass "/"
+          sp jlevy/squares jlevy "/packing/"
+          du -sh . ; find . -name "*.cert" | wc -l
+      - name: our current best
+        run: |
+          mkdir -p ours slices out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          cd hop && python3 best_merge.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/ours/best.csv
+      - name: certificates below our sides
+        run: |
+          set -o pipefail; cd hop && python3 certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/certs.csv $GITHUB_WORKSPACE/ext | tee $GITHUB_WORKSPACE/out/certs.log | tail -12
+      - name: commit
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: |
+          if [ -s out/certs.csv ] && [ "$(wc -l < out/certs.csv)" -gt 1 ]; then
+            F="results/certs_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/certs.csv > "$F"
+            bash hop/data.sh push "results: certificate harvest $(date +%F)" "$F"
+          else
+            echo "no certificate beats our packings"
+          fi
+
+  ghsearch:
+    # public GitHub repositories about square packing (pushed in the last 21 days; all ages on the daily wide run):
+    # shallow clone, then read only: *.cert certificates, competition-format CSVs (header with square_id), packings
+    # written as literals in code. Nothing from the clones is executed. Winners -> results/ghsearch_<date>.csv.gz
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: search, clone and extract (one repository at a time, deleted after reading)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WIDE: ${{ inputs.wide }}
+        run: |
+          # narrow mode (every run): repositories pushed in the last 21 days. Wide mode (the 06 UTC run, or input wide=yes):
+          # every repository and code hit about square packing whatever its age, 3 pages per query.
+          if [ "$WIDE" = "yes" ] || [ "$(date -u +%H)" = "06" ]; then MODE=wide; DATEQ=""; PAGES=3; else MODE=narrow; DATEQ=" pushed:>$(date -u -d '21 days ago' +%F)"; PAGES=1; fi
+          echo "mode: $MODE"
+          {
+            for q in "square packing" "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d)" "squares_in_squares" "packing unit squares" "unit square packing" "square-packing" "squish squares" "packing squares" "square packing certificate" "pack n unit squares"; do
+              for pg in $(seq 1 $PAGES); do
+                gh api -X GET search/repositories -f q="$q$DATEQ" -f per_page=100 -f page=$pg --jq '.items[]|select(.size < 400000)|.full_name' 2>/dev/null || true; sleep 2
+              done
+            done
+            # code search finds repositories of new accounts whatever their name (submission header, competition keywords)
+            for c in '"id,n,square_id,x,y,angle"' '"square_id,x,y,angle"' '"square_id" packing unit squares' "$(echo c3F1YXJlcy1pbi1zcXVhcmVz | base64 -d) kaggle" 'filename:submission.csv square_id' 'extension:cert packing squares'; do
+              for pg in $(seq 1 $PAGES); do
+                # gh api prints the error body (a 429 JSON) on stdout, so keep the output only on success; retry on a rate limit
+                for a in 1 2 3; do
+                  if gh api -X GET search/code -f q="$c" -f per_page=100 -f page=$pg --jq '.items[].repository|select(.fork|not)|.full_name' > cs_one.txt 2> cs_err.txt; then
+                    grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' cs_one.txt | tee -a cs_hits.txt; break
+                  fi
+                  if grep -q 429 cs_err.txt cs_one.txt; then echo "code search 429 on '$c' page $pg, attempt $a" >> cs_warn.txt; sleep $((70 * a)); else echo "code search failed on '$c': $(head -c 200 cs_err.txt)" >> cs_warn.txt; break; fi
+                done; sleep 10
+              done
+            done
+            # known sources that publish packings as .csv.gz or JSON outside the code-search index
+            echo yugavka/square_in_squares; echo sosudo/squares_in_squares; echo TheSnakeFang/squarepack-certs
+          } | grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' | sort -u > hits.txt || true
+          [ -s cs_warn.txt ] && echo "::warning title=code search::$(tr '\n' ' ' < cs_warn.txt | cut -c1-600)"
+          # keep packing-related names; code-search hits are kept whatever their name
+          { grep -i -E "(squar.*pack|pack.*squar|squares?[-_]?in[-_]?squares?|square.?packing|squish|unit.?squares|n[0-9]+-square|s[0-9]+-(upper|lower)|square.*cert|kaggle.*squar|squar.*kaggle)" hits.txt; sort -u cs_hits.txt 2>/dev/null; } \
+            | grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' | sort -u | grep -v -i -E "^(othman-istaiteh|evand|Mishapolk|franciscouzo|dostashev|itsnaka|wand125|griffcass|jlevy)/|circle|sphere|bin-?pack|webpack|knapsack|sqpack(fs|tool)" | head -250 > repos.txt || true
+          echo "::notice title=ghsearch-count::$MODE: $(wc -l < hits.txt) hits, $(wc -l < repos.txt) repos kept, $(sort -u cs_hits.txt 2>/dev/null | wc -l) from code search"
+          mkdir -p ours slices pubs out gx
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && python3 best_merge.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/ours/best.csv | tail -1)
+          i=0; for r in $(cat repos.txt); do
+            i=$((i+1)); d="gx/r$i"; t="r$i"
+            timeout 300 git clone -q --depth 1 --filter=blob:limit=150m "https://github.com/$r.git" "$d" 2>/dev/null || { echo "clone $r failed"; rm -rf "$d"; continue; }
+            rm -rf "$d/.git"; echo "$t $r"
+            (cd hop && python3 -I collect_csvs.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_c") | grep -v " 0 files" || true
+            (cd hop && python3 -I embedded.py "$GITHUB_WORKSPACE/$d" "$GITHUB_WORKSPACE/pubs" "${t}_e") || true
+            if find "$d" -name '*.cert' -print -quit | grep -q .; then
+              (cd hop && timeout 900 python3 certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/gc_$t.csv $GITHUB_WORKSPACE/$d | tail -1) || true
+              if [ -s out/gc_$t.csv ] && [ "$(wc -l < out/gc_$t.csv)" -gt 1 ]; then mkdir -p pubs/${t}_cert && cp out/gc_$t.csv pubs/${t}_cert/submission.csv; fi
+            fi
+            rm -rf "$d"
+          done
+          (cd hop && python3 prefilter.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/pubs) || echo "prefilter failed"
+          for d in pubs/*/; do if [ -d "$d" ]; then mv "$d" slices/; fi; done
+      - name: certified merge, keep the improvements
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -4
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          echo "::notice title=ghsearch::$(tr '\n' ' ' < repos.txt | cut -c1-400) | $(tail -1 out/merge.log | cut -c1-300)"
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/ghsearch_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: GitHub search harvest $(date +%F)" "$F"
+          fi
