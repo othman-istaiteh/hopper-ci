@@ -57,6 +57,10 @@ jobs:
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: build fq and fetch the exact descent
         run: |
           git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
@@ -82,11 +86,15 @@ jobs:
           SQ_WORKERS=$(nproc) PO_DEADLINE=${{ inputs.deadline }} PO_NTARGET=$PER PO_SKIP=$SKIP \
           PO_DESC_TIMEOUT=600 PO_BUDGET_H=5.0 \
           python3 -u polish.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES"
+      - name: seal the outputs (artifacts of a public repo are downloadable by anyone)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh seal out
       - uses: actions/upload-artifact@v4
         with:
           name: polish-${{ matrix.slice }}
-          path: out/submission.csv
-          retention-days: 7
+          path: out.tar.enc
+          retention-days: 1
 
   merge:
     needs: polish
@@ -96,9 +104,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main   # the latest main, not the dispatch-time commit: results committed during the run must be merged
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - uses: actions/download-artifact@v4
         with:
           path: slices
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal slices
       - name: python deps
         run: pip install -q numpy mpmath
       - name: certified merge of the slices and the seeds
@@ -110,23 +126,24 @@ jobs:
           SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
           python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -20
       - name: keep the improvements in results/
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
         run: |
           mkdir -p ours
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; done
           (cd hop && python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
           if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
-            gzip -9 -c out/improved.csv > "results/polish_$(date +%m%d)_${{ github.run_number }}.csv.gz"
-            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-            git add results/ && git commit -q -m "results: polish ${{ github.run_number }} (${{ inputs.sched }})" || true
-            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            F="results/polish_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: polish ${{ github.run_number }} (${{ inputs.sched }})" "$F"
             echo "::notice title=improved::$(tail -3 out/merge.log | tr '\n' ' ' | cut -c1-500)"
           else
             echo "::notice title=improved::none"
           fi
       - name: publish as release asset
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=polish-${{ github.run_number }}
-          gh release create "$TAG" out/submission.csv out/merge.log --title "polish run ${{ github.run_number }}" --notes "certified merge of polish run ${{ github.run_id }}, schedules ${{ inputs.sched }}, evand ${{ inputs.evand_ref }}"
-          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/submission.csv"
+          gh release create "$TAG" out/merge.log --title "polish run ${{ github.run_number }}" --notes "certified merge of polish run ${{ github.run_id }}, schedules ${{ inputs.sched }}, evand ${{ inputs.evand_ref }}"
+          bash hop/data.sh release "$TAG" "polish run ${{ github.run_number }}" "certified merge of polish run ${{ github.run_id }}" out/submission.csv

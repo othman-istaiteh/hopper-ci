@@ -52,10 +52,15 @@ jobs:
           SQ_WORKERS=$(nproc) SQ_MAXC=40 SQ_DEDUP=0 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} HOP_SEED0=500 \
           HOP_NTARGET=1000 HOP_BUDGET_H=4 FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" HOP_ENGINE=${{ matrix.engine }} \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/relax_${{ matrix.engine }}.log | tail -30
+      - name: seal the outputs (artifacts of a public repo are downloadable by anyone)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh seal out
       - uses: actions/upload-artifact@v4
         with:
           name: relax-${{ matrix.engine }}
-          path: out/
+          path: out.tar.enc
+          retention-days: 1
 
   publish:
     needs: relax
@@ -68,10 +73,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: parts
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal parts
       - name: python deps
         run: pip install -q numpy mpmath
       - name: merge the engines and publish
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p slices out
@@ -79,4 +89,5 @@ jobs:
           cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
           python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
           cd $GITHUB_WORKSPACE
-          gh release create "relax-${{ github.run_number }}" out/submission.csv out/*.log --title "relax ${{ github.run_number }}" --notes "engines ${{ inputs.engines }}, ${{ inputs.dir }}"
+          gh release create "relax-${{ github.run_number }}" out/*.log --title "relax ${{ github.run_number }}" --notes "engines ${{ inputs.engines }}, ${{ inputs.dir }}"
+          bash hop/data.sh release "relax-${{ github.run_number }}" "relax ${{ github.run_number }}" "engines ${{ inputs.engines }}, ${{ inputs.dir }}" out/submission.csv

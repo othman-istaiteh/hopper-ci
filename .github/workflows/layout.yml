@@ -59,10 +59,15 @@ jobs:
           SQ_WORKERS=$(nproc) SQ_MAXC=40 SQ_DEDUP=0 HOP_MIN=${{ inputs.polish_min }} HOP_SEEDS=1 HOP_SEED0=700 \
           HOP_NTARGET=1000 HOP_BUDGET_H=1 FQ_DEADLINE=180 HOP_ENGINE=quenchhop \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/polished.csv | grep -v "^SIDES" | tee -a $GITHUB_WORKSPACE/out/$TAG.log | tail -12
+      - name: seal the outputs (artifacts of a public repo are downloadable by anyone)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh seal out
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.TAG }}
-          path: out/
+          path: out.tar.enc
+          retention-days: 1
 
   publish:
     needs: search
@@ -72,13 +77,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main   # the latest main, not the dispatch-time commit: results committed during the run must be merged
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - uses: actions/download-artifact@v4
         with:
           path: parts
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal parts
       - name: python deps
         run: pip install -q numpy mpmath
       - name: certify, keep the improvements, publish
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p slices out ours
@@ -92,10 +106,8 @@ jobs:
            python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
           grep -h "^done\|init s=" out/l*.log | tee out/summary.txt || true
           if [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
-            gzip -9 -c out/improved.csv > "results/layout_$(date +%m%d)_${{ github.run_number }}.csv.gz"
-            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-            git add results/ && git commit -q -m "results: layout search ${{ github.run_number }}" || true
-            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            F="results/layout_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: layout search ${{ github.run_number }}" "$F"
           else
             echo "no layout beats our packings"
           fi

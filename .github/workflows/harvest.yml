@@ -32,6 +32,10 @@ jobs:
     timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: python deps
         run: pip install -q numpy mpmath kaggle
       - name: download public outputs
@@ -97,13 +101,12 @@ jobs:
           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log
       - name: commit and publish
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
-            gzip -9 -c out/improved.csv > "results/harvest_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"
-            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-            git add results/ && git commit -q -m "results: public harvest $(date +%F)" || true
-            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            F="results/harvest_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: public harvest $(date +%F)" "$F"
           else
             echo "nothing beats our packings"
           fi
@@ -114,6 +117,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: python deps
         run: pip install -q numpy mpmath
       - name: clone the certificate repositories (read only, sparse)
@@ -138,12 +145,12 @@ jobs:
         run: |
           set -o pipefail; cd hop && python3 certs2csv.py $GITHUB_WORKSPACE/ours/best.csv $GITHUB_WORKSPACE/out/certs.csv $GITHUB_WORKSPACE/ext | tee $GITHUB_WORKSPACE/out/certs.log | tail -12
       - name: commit
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
         run: |
           if [ -s out/certs.csv ] && [ "$(wc -l < out/certs.csv)" -gt 1 ]; then
-            gzip -9 -c out/certs.csv > "results/certs_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"
-            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-            git add results/ && git commit -q -m "results: certificate harvest $(date +%F)" || true
-            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            F="results/certs_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/certs.csv > "$F"
+            bash hop/data.sh push "results: certificate harvest $(date +%F)" "$F"
           else
             echo "no certificate beats our packings"
           fi
@@ -156,6 +163,10 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: python deps
         run: pip install -q numpy mpmath
       - name: search, clone and extract (one repository at a time, deleted after reading)
@@ -212,6 +223,7 @@ jobs:
           for d in pubs/*/; do if [ -d "$d" ]; then mv "$d" slices/; fi; done
       - name: certified merge, keep the improvements
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
@@ -219,8 +231,6 @@ jobs:
            python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
           echo "::notice title=ghsearch::$(tr '\n' ' ' < repos.txt | cut -c1-400) | $(tail -1 out/merge.log | cut -c1-300)"
           if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
-            gzip -9 -c out/improved.csv > "results/ghsearch_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"
-            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-            git add results/ && git commit -q -m "results: GitHub search harvest $(date +%F)" || true
-            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            F="results/ghsearch_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: GitHub search harvest $(date +%F)" "$F"
           fi

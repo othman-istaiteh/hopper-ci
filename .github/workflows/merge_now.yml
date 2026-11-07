@@ -24,10 +24,15 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: python deps
         run: pip install -q numpy mpmath kaggle
       - name: gather candidates
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
           GH_TOKEN: ${{ github.token }}
@@ -36,7 +41,7 @@ jobs:
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
           for t in $(echo "${{ inputs.releases }}" | tr ',' ' '); do
             mkdir -p "slices/rel_${t//-/_}"
-            gh release download "$t" -p submission.csv -D "slices/rel_${t//-/_}" --clobber && echo "release $t fetched" || echo "release $t: no submission.csv"
+            bash hop/data.sh dl "$t" submission.csv "slices/rel_${t//-/_}"
           done
           if [ "${{ inputs.fetch_kaggle }}" = "yes" ] && [ -n "$KAGGLE_KEY" ]; then
             mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
@@ -56,6 +61,7 @@ jobs:
           python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -20
       - name: publish and submit
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
           GH_TOKEN: ${{ github.token }}
@@ -63,10 +69,11 @@ jobs:
           TAG=merge-${{ github.run_number }}
           # retry: a GitHub 5xx here once cost a whole merge (4 Nov); if the release exists, just upload the file
           for i in 1 2 3 4 5; do
-            if gh release view "$TAG" > /dev/null 2>&1; then gh release upload "$TAG" out/submission.csv --clobber && break
-            else gh release create "$TAG" out/submission.csv --title "on-demand merge ${{ github.run_number }}" --notes "releases: ${{ inputs.releases }}" && break; fi
+            if gh release view "$TAG" > /dev/null 2>&1; then break
+            else gh release create "$TAG" --title "on-demand merge ${{ github.run_number }}" --notes "releases: ${{ inputs.releases }}" && break; fi
             [ $i -eq 5 ] && exit 1; sleep $((i * 15))
           done
+          bash hop/data.sh release "$TAG" "on-demand merge ${{ github.run_number }}" "releases: ${{ inputs.releases }}" out/submission.csv
           if [ -n "$KAGGLE_KEY" ]; then
             mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
             export KAGGLE_API_TOKEN="$KAGGLE_KEY"

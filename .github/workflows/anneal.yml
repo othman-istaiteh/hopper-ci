@@ -36,6 +36,10 @@ jobs:
         task: ${{ fromJson(inputs.tasks) }}
     steps:
       - uses: actions/checkout@v4
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: python deps
         run: pip install -q numpy scipy mpmath jax jaxlib
       - name: fetch fillfast (evand, pinned)
@@ -88,12 +92,17 @@ jobs:
           wait
           grep -h ANNEAL out/${TAG}_s*.log || true
           echo "::notice title=$TAG::$(grep -h ANNEAL out/${TAG}_s*.log | tr '\n' ' ' | cut -c1-900)"
+      - name: seal the outputs (artifacts of a public repo are downloadable by anyone)
+        if: always()
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh seal out
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ${{ env.TAG }}
-          path: out/
-          retention-days: 14
+          path: out.tar.enc
+          retention-days: 1
 
   publish:
     needs: anneal
@@ -103,13 +112,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main   # the latest main, not the dispatch-time commit: results committed during the run must be merged
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - uses: actions/download-artifact@v4
         with:
           path: parts
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal parts
       - name: python deps
         run: pip install -q numpy mpmath
       - name: certify, compare with ours, keep the improvements
         env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p slices out ours
@@ -145,10 +163,8 @@ jobs:
                   if k == n: print('%s n=%d side=%.6f ours=%.6f diff=%+.6f (uncertified bbox)' % (os.path.basename(p), n, s, best.get(n, 0), s - best.get(n, 0)))
           EOF
           if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
-            gzip -9 -c out/improved.csv > "results/anneal_$(date +%m%d)_${{ github.run_number }}.csv.gz"
-            git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-            git add results/ && git commit -q -m "results: anneal ${{ github.run_number }}" || true
-            for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 30)); done
+            F="results/anneal_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: anneal ${{ github.run_number }}" "$F"
             echo "::notice title=improved::$(tail -2 out/merge.log | tr '\n' ' ' | cut -c1-500)"
           else
             echo "::notice title=improved::none"

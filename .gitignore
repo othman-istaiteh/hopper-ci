@@ -7,3 +7,9 @@ hop/sq12.b64
 seeds_un/
 design/llm/base.csv
 __pycache__/
+# our packings live in the private data repo (hop/data.sh); the copies pulled into the workspace are never committed here
+seeds/*.csv.gz
+results/*.csv.gz
+data/
+out.tar.enc
+clone.err
