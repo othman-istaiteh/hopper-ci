@@ -75,7 +75,7 @@ jobs:
           done
           # public datasets (searched by competition keywords, newest first, at most 20, each at most 1 GB)
           j=0
-          { for q in "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "square packing"; do
+          { for q in "$(echo c3F1YXJlcyBpbiBzcXVhcmVz | base64 -d)" "square packing" "squares"; do
               for pg in $(seq 1 $(( (DS_TOP + 19) / 20 ))); do
                 kaggle datasets list --search "$q" --sort-by updated --max-size 1000000000 --page $pg --csv 2>/dev/null | tail -n +2 | cut -d, -f1
               done | head -n "$DS_TOP"
