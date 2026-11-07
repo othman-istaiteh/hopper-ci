@@ -1,0 +1,36 @@
+name: code_init
+# One-off (7 Nov 2026, step 2): copy the code directories still tracked in this checkout (hop/ without data.sh and
+# max_jobs.txt, design/, seeds_x*/, colab/, pi/) into the private repo, print checksums for verification. Re-runnable.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: commit of this repo to copy the code from (the last one that still tracks it)
+        default: "main"
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: import into the private repo
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: |
+          [ -n "$DATA_TOKEN" ] || { echo "DATA_TOKEN secret missing"; exit 1; }
+          DIRS="hop design colab pi $(ls -d seeds_x* 2>/dev/null)"
+          mkdir -p imp && for c in $DIRS; do [ -d "$c" ] && cp -r "$c" imp/; done
+          rm -f imp/hop/data.sh imp/hop/max_jobs.txt   # these two stay public (the bootstrap and the job cap)
+          (cd imp && find . -type f | sort | xargs sha256sum) > import_checksums.txt; wc -l < import_checksums.txt
+          bash hop/data.sh pull
+          for c in $DIRS; do [ -d "imp/$c" ] && mkdir -p "data/$c" && cp -r "imp/$c/." "data/$c/"; done
+          cd data && git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
+          git add -A $DIRS && git commit -q -m "import of the code directories from hopper-ci ${{ github.sha }} (step 2 of the private repo move)" || echo "nothing new"
+          git push -q origin "HEAD:$(git rev-parse --abbrev-ref HEAD)"
+          echo "private repo at $(git rev-parse --short HEAD): $(git ls-files | wc -l) files"
+          cd .. && rm -rf data $DIRS && mkdir -p hop && git checkout -q -- hop/data.sh hop/max_jobs.txt && bash hop/data.sh pull
+          rm -f hop/data.sh hop/max_jobs.txt
+          (for c in $DIRS; do [ -d "$c" ] && (cd "$c/.." && find "$c" -type f); done | sed 's#^#./#' | sort | xargs sha256sum) | diff - import_checksums.txt && echo "VERIFIED: the private repo returns every code file with identical checksums"

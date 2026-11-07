@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Private data repo helper (7 Nov 2026). Our packings (seeds/*.csv.gz, results/*.csv.gz) live in the PRIVATE repo
-# <owner>/hopper-private (code moves there in step 2); this public repo keeps only code and workflows (free Actions minutes). Workflows reach the data
-# with the repository secret DATA_TOKEN (fine-grained token, Contents read/write on hopper-private only), which is passed
-# to the steps that call this script and to nothing else.
-#   data.sh pull                      clone hopper-private (depth 1) into ./data and copy its seeds/ and results/ files here
-#   data.sh push MSG FILE...          copy FILE(s) (workspace-relative, e.g. results/x.csv.gz) into ./data, commit, push
+# Private repo helper (7 Nov 2026). Our code AND packings live in the PRIVATE repo <owner>/hopper-private (hop/, design/,
+# seeds_x*/, colab/, pi/, seeds/*.csv.gz, results/*.csv.gz); this public repo keeps only the workflows, this script and
+# hop/max_jobs.txt (free Actions minutes). Workflows reach the private repo with the repository secret DATA_TOKEN
+# (fine-grained token, Contents read/write on hopper-private only), passed to the steps that call this script and to nothing else.
+#   data.sh pull                      clone hopper-private (depth 1) into ./data, copy its code dirs and seeds/results files here
+#   data.sh push MSG PATH...          copy PATH(s) (workspace-relative files or dirs) into ./data, commit, push
 #   data.sh release TAG TITLE NOTES FILE...   create (or add to) release TAG in hopper-private with the given assets
 #   data.sh dl TAG PATTERN DIR        download the assets matching PATTERN of release TAG of hopper-private into DIR
 #   data.sh seal DIR                  DIR -> DIR.tar.enc (aes-256-cbc, pbkdf2, key derived from DATA_TOKEN); for artifacts
@@ -23,17 +23,25 @@ case "$cmd" in
     for i in 1 2 3; do git clone -q --depth 1 "$URL" "$D" 2> clone.err && break; sleep $((i * 10)); done
     [ -d "$D/.git" ] || { echo "data.sh: clone of $OWNER/$REPO failed: $(sed 's#https://[^@]*@#https://#g' clone.err | head -c 300)"; exit 1; }
     rm -f clone.err
+    # code: copied (not linked) so that this public hop/ (data.sh, max_jobs.txt) and the private hop/ merge into one directory
+    for c in hop design colab pi $(cd "$D" && ls -d seeds_x* 2> /dev/null); do
+      [ -d "$D/$c" ] || continue
+      mkdir -p "$ROOT/$c" && cp -r "$D/$c/." "$ROOT/$c/"
+    done
     mkdir -p "$ROOT/seeds" "$ROOT/results"
     cp "$D"/seeds/*.csv.gz "$ROOT/seeds/" 2> /dev/null || true
     cp "$D"/results/*.csv.gz "$ROOT/results/" 2> /dev/null || true
-    echo "data: $(ls "$ROOT"/seeds/*.csv.gz 2> /dev/null | wc -l) seed files, $(ls "$ROOT"/results/*.csv.gz 2> /dev/null | wc -l) result files from $OWNER/$REPO@$(git -C "$D" rev-parse --short HEAD)" ;;
+    echo "data: $(ls "$ROOT"/seeds/*.csv.gz 2> /dev/null | wc -l) seed files, $(ls "$ROOT"/results/*.csv.gz 2> /dev/null | wc -l) result files, $(ls "$ROOT"/hop/*.py 2> /dev/null | wc -l) hop scripts from $OWNER/$REPO@$(git -C "$D" rev-parse --short HEAD)" ;;
   push)
     MSG=$1; shift
     [ -d "$D/.git" ] || { echo "data.sh: run 'data.sh pull' first"; exit 1; }
-    for f in "$@"; do mkdir -p "$D/$(dirname "$f")"; cp "$ROOT/$f" "$D/$f"; done
+    for f in "$@"; do
+      f=${f%/}; mkdir -p "$D/$(dirname "$f")"
+      if [ -d "$ROOT/$f" ]; then mkdir -p "$D/$f" && cp -r "$ROOT/$f/." "$D/$f/"; else cp "$ROOT/$f" "$D/$f"; fi
+    done
     cd "$D"
     git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-    git add -A seeds results
+    for f in "$@"; do git add -A -- "${f%/}"; done
     git commit -q -m "$MSG" || { echo "data: nothing to commit"; exit 0; }
     B=$(git rev-parse --abbrev-ref HEAD)
     for i in 1 2 3 4 5; do git pull -q --rebase origin "$B" && git push -q origin "HEAD:$B" && { echo "data: pushed $* ($MSG)"; exit 0; }; sleep $((i * 15)); done
