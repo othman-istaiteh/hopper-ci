@@ -29,7 +29,8 @@ jobs:
           for c in $DIRS; do [ -d "imp/$c" ] && mkdir -p "data/$c" && cp -r "imp/$c/." "data/$c/"; done
           cd data && git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
           git add -A $DIRS && git commit -q -m "import of the code directories from hopper-ci ${{ github.sha }} (step 2 of the private repo move)" || echo "nothing new"
-          git push -q origin "HEAD:$(git rev-parse --abbrev-ref HEAD)"
+          B=$(git rev-parse --abbrev-ref HEAD)
+          for i in 1 2 3 4 5; do git pull -q --rebase origin "$B" && git push -q origin "HEAD:$B" && break; sleep $((i * 15)); done
           echo "private repo at $(git rev-parse --short HEAD): $(git ls-files | wc -l) files"
           cd .. && rm -rf data $DIRS && mkdir -p hop && git checkout -q -- hop/data.sh hop/max_jobs.txt && bash hop/data.sh pull
           rm -f hop/data.sh hop/max_jobs.txt
