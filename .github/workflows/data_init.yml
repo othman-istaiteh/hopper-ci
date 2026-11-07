@@ -1,0 +1,36 @@
+name: data_init
+# One-off (7 Nov 2026): copy the seeds/*.csv.gz and results/*.csv.gz still tracked in this checkout into the private data
+# repo (hop/data.sh), and print their count and checksums so the import can be verified from the job log. Safe to re-run:
+# it only adds or updates files in the private repo.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: commit of this repo to copy the packings from (the last one that still tracks seeds/ and results/)
+        default: "main"
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: import into the private data repo
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: |
+          [ -n "$DATA_TOKEN" ] || { echo "DATA_TOKEN secret missing"; exit 1; }
+          n=$(ls seeds/*.csv.gz results/*.csv.gz 2>/dev/null | wc -l)
+          echo "tracked packing files in this checkout: $n"; [ "$n" -gt 0 ] || exit 1
+          sha256sum seeds/*.csv.gz results/*.csv.gz | tee import_checksums.txt | tail -3
+          mkdir -p imp/seeds imp/results && cp seeds/*.csv.gz imp/seeds/ && cp results/*.csv.gz imp/results/
+          rm -rf seeds results   # so that data.sh pull below reports only what the private repo holds
+          bash hop/data.sh pull || true
+          mkdir -p data/seeds data/results && cp imp/seeds/*.csv.gz data/seeds/ && cp imp/results/*.csv.gz data/results/
+          cd data && git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
+          git add -A seeds results && git commit -q -m "initial import of seeds/ and results/ from hopper-ci ${{ github.sha }}" || echo "nothing new"
+          git push -q origin "HEAD:$(git rev-parse --abbrev-ref HEAD)"
+          echo "private repo now holds $(ls seeds/*.csv.gz results/*.csv.gz | wc -l) packing files at $(git rev-parse --short HEAD)"
+          cd .. && rm -rf seeds results && bash hop/data.sh pull && sha256sum seeds/*.csv.gz results/*.csv.gz | diff - import_checksums.txt && echo "VERIFIED: the private repo holds every file with identical checksums"
