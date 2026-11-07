@@ -34,6 +34,10 @@ jobs:
         shard: ${{ fromJson(inputs.shards) }}
     steps:
       - uses: actions/checkout@v4
+      - name: our code and packings (private repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: build packer and fq
         run: |
           git clone -q --depth 1 --filter=blob:none --sparse https://github.com/evand/square-packing.git evand

@@ -163,7 +163,7 @@ jobs:
           cd hop
           SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
           python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv > $GITHUB_WORKSPACE/out/full.log
-          (grep '^SIDES' $GITHUB_WORKSPACE/out/full.log | tr ' ' '\n' | grep ':' | tr ':' ' ' > $GITHUB_WORKSPACE/hop/sides_best.txt) || true   # public: sides only
+          (grep '^SIDES' $GITHUB_WORKSPACE/out/full.log | tr ' ' '\n' | grep ':' | tr ':' ' ' > $GITHUB_WORKSPACE/sides_best.txt) || true   # public: sides only
           grep -v '^SIDES' $GITHUB_WORKSPACE/out/full.log | tee $GITHUB_WORKSPACE/out/merge.log | tail -20
       - name: publish as release asset (merge.log public here, submission.csv in the private data repo)
         env:
@@ -194,10 +194,10 @@ jobs:
         run: |
           gzip -9 -c out/submission.csv > "seeds/${{ inputs.label }}.csv.gz"
           python3 hop/update_soft.py slices out/submission.csv hop/soft_list.txt | tee -a out/merge.log
-          bash hop/data.sh push "seeds: ${{ inputs.label }} = merge of hop run ${{ github.run_number }}" "seeds/${{ inputs.label }}.csv.gz"
+          bash hop/data.sh push "seeds: ${{ inputs.label }} = merge of hop run ${{ github.run_number }}" "seeds/${{ inputs.label }}.csv.gz" hop/soft_list.txt
           git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
-          git add hop/soft_list.txt hop/sides_best.txt
-          git commit -q -m "lists after hop run ${{ github.run_number }} (soft puzzles, best sides)" || exit 0
+          git add sides_best.txt
+          git commit -q -m "best sides after hop run ${{ github.run_number }}" || exit 0
           for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 10)); done
       - name: dispatch the next run of the chain
         if: inputs.chain != '0' && inputs.chain != ''

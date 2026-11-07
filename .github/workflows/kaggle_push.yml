@@ -26,6 +26,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: our code and packings (private repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
       - name: deps
         run: pip install -q kaggle
       - name: build the notebook
