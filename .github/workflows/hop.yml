@@ -161,6 +161,7 @@ jobs:
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
           ls slices
           cd hop
+          python3 expand.py $GITHUB_WORKSPACE/slices $GITHUB_WORKSPACE/slices/expand/submission.csv || echo "expand failed"
           SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
           python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv > $GITHUB_WORKSPACE/out/full.log
           (grep '^SIDES' $GITHUB_WORKSPACE/out/full.log | tr ' ' '\n' | grep ':' | tr ':' ' ' > $GITHUB_WORKSPACE/sides_best.txt) || true   # public: sides only
