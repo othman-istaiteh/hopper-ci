@@ -3,6 +3,11 @@ name: merge_now
 # submission.csv assets of the given releases; publishes release merge-<run_number> (submission.csv, merge.log) and
 # submits to Kaggle when better than our best submission (hop/kaggle_submit.py rules).
 on:
+  # 8 Nov (Othman): 6 submission slots a day, every 4 hours, at 02:23 06:23 10:23 14:23 18:23 22:23 French winter time
+  # (01:23 ... 21:23 UTC, inside one Kaggle day, the last one 2.5 h before the 00:00 UTC reset). Each slot submits any
+  # certified gain; the daily cap of 8 counts every submission of the day, so 2 stay free for emergencies (Kaggle allows 10).
+  schedule:
+    - cron: '23 1,5,9,13,17,21 * * *'
   workflow_dispatch:
     inputs:
       releases:
@@ -13,10 +18,10 @@ on:
         default: "yes"
       max_per_day:
         description: daily cap for automatic submissions in this run (KAGGLE_MAX_PER_DAY)
-        default: "2"
+        default: "8"
       min_gain:
-        description: minimum gain over our best submission to submit (KAGGLE_MIN_GAIN; 2e-4 by day, 1e-7 for the last call before the 00:00 UTC reset)
-        default: "2e-4"
+        description: minimum gain over our best submission to submit (KAGGLE_MIN_GAIN; any certified gain since 8 Nov)
+        default: "1e-7"
 
 permissions:
   contents: write
@@ -46,7 +51,7 @@ jobs:
             mkdir -p "slices/rel_${t//-/_}"
             bash hop/data.sh dl "$t" submission.csv "slices/rel_${t//-/_}"
           done
-          if [ "${{ inputs.fetch_kaggle }}" = "yes" ] && [ -n "$KAGGLE_KEY" ]; then
+          if [ "${{ inputs.fetch_kaggle || 'yes' }}" = "yes" ] && [ -n "$KAGGLE_KEY" ]; then
             mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
             export KAGGLE_API_TOKEN="$KAGGLE_KEY"
             mkdir -p slices/kaggle_merge
@@ -74,13 +79,13 @@ jobs:
           # retry: a GitHub 5xx here once cost a whole merge (4 Nov); if the release exists, just upload the file
           for i in 1 2 3 4 5; do
             if gh release view "$TAG" > /dev/null 2>&1; then break
-            else gh release create "$TAG" --title "on-demand merge ${{ github.run_number }}" --notes "releases: ${{ inputs.releases }}" && break; fi
+            else gh release create "$TAG" --title "on-demand merge ${{ github.run_number }}" --notes "${{ github.event_name }} releases: ${{ inputs.releases }}" && break; fi
             [ $i -eq 5 ] && exit 1; sleep $((i * 15))
           done
           bash hop/data.sh release "$TAG" "on-demand merge ${{ github.run_number }}" "releases: ${{ inputs.releases }}" out/submission.csv
           if [ -n "$KAGGLE_KEY" ]; then
             mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
             export KAGGLE_API_TOKEN="$KAGGLE_KEY"
-            KAGGLE_MAX_PER_DAY=${{ inputs.max_per_day }} KAGGLE_MIN_GAIN=${{ inputs.min_gain || '2e-4' }} python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub on-demand merge ${{ github.run_number }} (${{ inputs.releases }})" | tee -a out/merge.log
+            KAGGLE_MAX_PER_DAY=${{ inputs.max_per_day || '8' }} KAGGLE_MIN_GAIN=${{ inputs.min_gain || '1e-7' }} python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub on-demand merge ${{ github.run_number }} (${{ inputs.releases }})" | tee -a out/merge.log
           fi
           gh release upload "$TAG" out/merge.log --clobber

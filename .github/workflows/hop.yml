@@ -180,6 +180,8 @@ jobs:
           done
           bash hop/data.sh release "$TAG" "hop run ${{ github.run_number }}" "certified merge of run ${{ github.run_id }}" out/submission.csv
       - name: submit to Kaggle when better than our best submission (token configured, daily budget left)
+        # off since 8 Nov: submissions only from the 6 scheduled merge_now slots (every 4 h), which pick up this run's seed
+        if: ${{ false }}
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}

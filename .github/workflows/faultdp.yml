@@ -6,6 +6,10 @@ name: faultdp
 # from our better packings are reused across other puzzles. Steps: our certified best -> fault DP passes (DP, his merge,
 # closures) -> gadget quench with fq -> our certified merge -> improvements pushed to the private repo.
 on:
+  # 8 Nov (Othman: add anything that helps): nightly at 02:41 French winter time (01:41 UTC); about 3 h, done before the
+  # 06:23 submission slot, and it always starts from our latest certified best.
+  schedule:
+    - cron: '41 1 * * *'
   workflow_dispatch:
     inputs:
       passes:
@@ -63,7 +67,7 @@ jobs:
         run: |
           W=$GITHUB_WORKSPACE/out; cur=$W/start.csv
           COUZO=$SRC/couzo.csv; HOP=$SRC/hop.csv; BIG=$SRC/couzo_big.csv
-          for p in $(seq 0 $(( ${{ inputs.passes }} - 1 ))); do
+          for p in $(seq 0 $(( ${{ inputs.passes || '3' }} - 1 ))); do
             timeout 3600 python3 -u $SRC/fault_dp.py $cur $W/fault$p $COUZO $HOP $BIG > $W/fault$p.log 2>&1 || echo "fault_dp pass $p exit $?"
             grep -E 'DONE|rror' $W/fault$p.log | tail -3
             ls $W/fault$p/[0-9]*.csv > /dev/null 2>&1 || { echo "pass $p: no compositions"; break; }
@@ -81,7 +85,7 @@ jobs:
         run: |
           W=$GITHUB_WORKSPACE/out
           KEYS=$SRC/quench_keys.json; [ -f "$KEYS" ] || { echo "no quench_keys.json in the kit"; exit 0; }
-          timeout 7200 python3 -u $SRC/quench_gadgets.py $CUR $W/quench $KEYS ${{ inputs.quench_seconds }} $(nproc) $SRC/couzo.csv $SRC/hop.csv $SRC/couzo_big.csv > $W/quench.log 2>&1 || echo "quench exit $?"
+          timeout 7200 python3 -u $SRC/quench_gadgets.py $CUR $W/quench $KEYS ${{ inputs.quench_seconds || '60' }} $(nproc) $SRC/couzo.csv $SRC/hop.csv $SRC/couzo_big.csv > $W/quench.log 2>&1 || echo "quench exit $?"
           grep -E 'IMPROVED|DONE|rror' $W/quench.log | tail -30
           if ls $W/quench/[0-9]*.csv > /dev/null 2>&1; then
             args=""; for f in $W/quench/[0-9]*.csv; do n=$(basename $f .csv); args="$args quench_$n=$f"; done
