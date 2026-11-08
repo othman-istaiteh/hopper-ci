@@ -2,8 +2,8 @@ name: band
 # Thick corner-to-corner band test (forum 755628, pjmathematician's recipe): per task, design/bandseed.py builds a rigid
 # band seed for n at box side S with the band width bounded to [WMIN, WMAX], then hop/sq10_hop.py quenchhop (fq quench
 # + packer hop at temp 1.0, several hop seeds in parallel) relaxes it for hop_min minutes. The publish job certifies
-# every result and compares it with our current packing; it only publishes a release (no commit: a winner is added to
-# results/ by hand).
+# every result and compares it with our current packing, publishes a release and (since 8 Nov) pushes certified
+# improvements to results/ in the private repo.
 on:
   workflow_dispatch:
     inputs:
@@ -111,6 +111,7 @@ jobs:
       - name: certify and compare with ours
         env:
           GH_TOKEN: ${{ github.token }}
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
         run: |
           mkdir -p slices out ours
           for d in parts/*/; do t=$(basename "$d"); cat "$d"/*.log > "out/$t.log" 2>/dev/null || true
@@ -143,5 +144,10 @@ jobs:
               for n, (k, s) in sides(p).items():
                   print('%s n=%d squares=%d side=%.6f ours=%.6f diff=%+.6f (uncertified bbox)' % (os.path.basename(p), n, k, s, best.get(n, 0), s - best.get(n, 0)))
           EOF
+          # 8 Nov: certified improvements go straight to the private repo, so the next submission slot picks them up
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/band_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            DATA_TOKEN="$DATA_TOKEN" bash hop/data.sh push "results: band run ${{ github.run_number }}" "$F"
+          fi
           gh release create "band-${{ github.run_number }}" out/summary.txt out/merge.log out/b*.log --title "band ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
           echo "::notice title=summary::$(cat out/summary.txt | tr '\n' ' ' | cut -c1-1500)"
