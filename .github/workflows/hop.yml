@@ -199,7 +199,7 @@ jobs:
           git config user.name "othman-istaiteh" && git config user.email "othmanistaiteh@gmail.com"
           git add sides_best.txt
           git commit -q -m "best sides after hop run ${{ github.run_number }}" || exit 0
-          for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep $((i * 10)); done
+          for i in 1 2 3 4 5; do git pull -q --rebase --autostash origin main && git push -q origin HEAD:main && break; sleep $((i * 10)); done
       - name: dispatch the next run of the chain
         if: inputs.chain != '0' && inputs.chain != ''
         env:
