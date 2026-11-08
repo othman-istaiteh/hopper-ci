@@ -1,0 +1,112 @@
+name: faultdp
+# Fault-line gadget DP and gadget quench (8 Nov 2026, Othman approved running this public code): alexchilton's
+# "Fault-line DP + Basin Hopping" tools (Kaggle dataset alexchilton/squares-in-squares-starter-kit, Apache 2.0:
+# fault_dp.py, ensemble.py, closure.py, quench_gadgets.py, metric.py and his couzo/hop donor files; the fault-line idea
+# is Chris Deotte's). His notebook runs them on public merges; here they run on OUR certified best, so gadgets cropped
+# from our better packings are reused across other puzzles. Steps: our certified best -> fault DP passes (DP, his merge,
+# closures) -> gadget quench with fq -> our certified merge -> improvements pushed to the private repo.
+on:
+  workflow_dispatch:
+    inputs:
+      passes:
+        description: fault DP passes before the quench (his notebook converges in about 3)
+        default: "3"
+      quench_seconds:
+        description: fq seconds per gadget in the quench step (0 skips the quench)
+        default: "60"
+
+permissions:
+  contents: write
+
+jobs:
+  faultdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - name: our code and packings (private repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: python deps
+        run: pip install -q numpy scipy pandas mpmath matplotlib kaggle
+      - name: build fq (evand, pinned)
+        run: |
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d && git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock
+          cd search/packer && cargo build --release --bin fq --bin packer 2>&1 | tail -1 && ls -la target/release/fq target/release/packer
+      - name: alexchilton's starter kit (Kaggle dataset, Apache 2.0)
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          if [ -z "$KAGGLE_KEY" ]; then echo "no Kaggle token"; exit 1; fi
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          mkdir -p kit
+          for t in 1 2 3; do kaggle datasets download alexchilton/squares-in-squares-starter-kit -p kit --unzip > kit/dl.log 2>&1 && break; sleep $((t * 20)); done
+          find kit -maxdepth 3 -type f | sed 's#^kit/##' | sort | head -60
+          SRC=$(dirname "$(find kit -name fault_dp.py | head -1)"); echo "SRC=$GITHUB_WORKSPACE/$SRC" >> "$GITHUB_ENV"
+          test -f "$SRC/fault_dp.py" && test -f "$SRC/ensemble.py" && test -f "$SRC/closure.py"
+          head -40 "$SRC/fault_dp.py" | grep -E '^#|usage|argv' | head -15 || true
+      - name: our certified best as the starting file
+        run: |
+          mkdir -p slices out
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "slices/$n"; gunzip -c "$f" > "slices/$n/submission.csv"; done
+          cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=2 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/start.csv | grep -v '^SIDES' | tail -3
+      - name: fault-line DP passes
+        env:
+          FQ_BIN: ${{ github.workspace }}/evand/search/packer/target/release/fq
+          PACKER_BIN: ${{ github.workspace }}/evand/search/packer/target/release/packer
+          OMP_NUM_THREADS: "1"
+        run: |
+          W=$GITHUB_WORKSPACE/out; cur=$W/start.csv
+          COUZO=$SRC/couzo.csv; HOP=$SRC/hop.csv; BIG=$SRC/couzo_big.csv
+          for p in $(seq 0 $(( ${{ inputs.passes }} - 1 ))); do
+            timeout 3600 python3 -u $SRC/fault_dp.py $cur $W/fault$p $COUZO $HOP $BIG > $W/fault$p.log 2>&1 || echo "fault_dp pass $p exit $?"
+            grep -E 'DONE|rror' $W/fault$p.log | tail -3
+            ls $W/fault$p/[0-9]*.csv > /dev/null 2>&1 || { echo "pass $p: no compositions"; break; }
+            args=""; for f in $W/fault$p/[0-9]*.csv; do n=$(basename $f .csv); args="$args fault_$n=$f"; done
+            python3 -u $SRC/ensemble.py $W/m$p.csv cur=$cur $args | tail -2
+            python3 -u $SRC/closure.py $W/m$p.csv $W/c$p.csv | tail -2
+            cur=$W/c$p.csv
+          done
+          echo "CUR=$cur" >> "$GITHUB_ENV"
+      - name: gadget quench (fq)
+        if: inputs.quench_seconds != '0'
+        env:
+          FQ_BIN: ${{ github.workspace }}/evand/search/packer/target/release/fq
+          OMP_NUM_THREADS: "1"
+        run: |
+          W=$GITHUB_WORKSPACE/out
+          KEYS=$SRC/quench_keys.json; [ -f "$KEYS" ] || { echo "no quench_keys.json in the kit"; exit 0; }
+          timeout 7200 python3 -u $SRC/quench_gadgets.py $CUR $W/quench $KEYS ${{ inputs.quench_seconds }} $(nproc) $SRC/couzo.csv $SRC/hop.csv $SRC/couzo_big.csv > $W/quench.log 2>&1 || echo "quench exit $?"
+          grep -E 'IMPROVED|DONE|rror' $W/quench.log | tail -30
+          if ls $W/quench/[0-9]*.csv > /dev/null 2>&1; then
+            args=""; for f in $W/quench/[0-9]*.csv; do n=$(basename $f .csv); args="$args quench_$n=$f"; done
+            python3 -u $SRC/ensemble.py $W/mq.csv cur=$CUR $args | tail -2
+            python3 -u $SRC/closure.py $W/mq.csv $W/cq.csv | tail -2
+            echo "CUR=$W/cq.csv" >> "$GITHUB_ENV"
+          fi
+      - name: our certified merge and the improvements
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: |
+          mkdir -p slices/faultdp && cp "$CUR" slices/faultdp/submission.csv
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v '^SIDES' | tee $GITHUB_WORKSPACE/out/merge.log | tail -5)
+          mkdir -p ours
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; done
+          (cd hop && python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/faultdp_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: fault-line DP run ${{ github.run_number }}" "$F"
+          fi
+          echo "::notice title=faultdp::$(tail -2 out/merge.log | tr '\n' ' ' | cut -c1-400)"
+      - name: publish logs
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd out && ls *.log > /dev/null 2>&1 && gh release create "faultdp-${{ github.run_number }}" *.log --title "fault DP ${{ github.run_number }}" --notes "fault-line DP and gadget quench on our certified best" || true
