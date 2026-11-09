@@ -155,6 +155,7 @@ jobs:
           mkdir -p slices/kaggle_merge
           kaggle kernels output "$KAGGLE_USERNAME/notebook5586544269" -p slices/kaggle_merge && ls -la slices/kaggle_merge || echo "Kaggle output fetch failed"
           find slices/kaggle_merge -type f ! -name submission.csv -delete || true
+          for k in sq10-cpu-hop-c sq10-cpu-hop-d; do mkdir -p "slices/kaggle_${k##*-}"; kaggle kernels output "$KAGGLE_USERNAME/$k" -p "slices/kaggle_${k##*-}" > /dev/null 2>&1 || echo "no output from $k"; find "slices/kaggle_${k##*-}" -type f ! -name submission.csv -delete || true; done
       - name: certified merge of the slices and the seeds
         run: |
           mkdir -p out

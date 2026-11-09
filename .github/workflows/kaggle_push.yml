@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       kernel:
-        description: kernel slug (sq10-cpu-hop or sq10-cpu-hop-b)
+        description: kernel slug (sq10-cpu-hop, sq10-cpu-hop-b, and since 9 Nov sq10-cpu-hop-c, sq10-cpu-hop-d)
         default: "sq10-cpu-hop-b"
       args:
         description: mk_sq10.py arguments "maxc hop_min seeds ntarget budget_h skip seed0 'hop_args' 'nlist'"
@@ -46,7 +46,12 @@ jobs:
         run: |
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
-          mkdir -p push && kaggle kernels pull "$KAGGLE_USERNAME/${{ inputs.kernel }}" -m -p push
+          mkdir -p push
+          if ! kaggle kernels pull "$KAGGLE_USERNAME/${{ inputs.kernel }}" -m -p push; then
+            # 9 Nov: a new slot (e.g. sq10-cpu-hop-c) starts from slot b's metadata (same inputs), with its own id and title
+            rm -rf push && mkdir -p push && kaggle kernels pull "$KAGGLE_USERNAME/sq10-cpu-hop-b" -m -p push
+            python3 -c "import json,sys; m=json.load(open('push/kernel-metadata.json')); m['id']=sys.argv[1]; m['title']=sys.argv[2]; m.pop('id_no',None); json.dump(m,open('push/kernel-metadata.json','w'),indent=1)" "$KAGGLE_USERNAME/${{ inputs.kernel }}" "${{ inputs.kernel }}"
+          fi
           ls -la push && cat push/kernel-metadata.json
           python3 - <<'PY'
           import json, shutil, glob, os
