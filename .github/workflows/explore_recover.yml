@@ -1,0 +1,60 @@
+name: explore_recover
+# 9 Nov 2026: re-does the publish step of an explore run whose matrix jobs finished but whose publish job GitHub never
+# started (internal server error): downloads that run's sealed artifacts (kept 1 day), certifies, pushes improvements.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: id of the explore run to recover
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main   # the latest main, not the dispatch-time commit: results committed during the run must be merged
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal parts
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certify, keep the improvements, publish
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p slices out ours
+          cat parts/*/summary_*.txt > out/summary.txt 2>/dev/null || true
+          for d in parts/*/; do cp "$d"/ex_*.log out/ 2>/dev/null || true
+            for f in "$d"/*.csv; do [ -f "$f" ] || continue; t=$(basename "$f" .csv); mkdir -p "slices/$t"; cp "$f" "slices/$t/submission.csv"; done
+          done
+          ls slices | head -40
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/explore_$(date +%m%d)_r${{ inputs.run_id }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            bash hop/data.sh push "results: explorer run ${{ inputs.run_id }} (recovered)" "$F"
+            echo "::notice title=improved::$(tail -3 out/merge.log | tr '\n' ' ' | cut -c1-500)"
+          else
+            echo "::notice title=improved::none"
+          fi
+          echo "::notice title=summary::$(tr '\n' ' ' < out/summary.txt | cut -c1-900)"
+          gh release create "explore-rec-${{ github.run_number }}" out/summary.txt out/merge.log out/ex_*.log --title "explore recovered ${{ inputs.run_id }}" --notes "publish step of explore run ${{ inputs.run_id }}, which GitHub failed with an internal error" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
