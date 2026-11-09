@@ -57,7 +57,7 @@ jobs:
             mkdir -p slices/kaggle_merge
             kaggle kernels output "$KAGGLE_USERNAME/notebook5586544269" -p slices/kaggle_merge || echo "Kaggle output fetch failed"
             find slices/kaggle_merge -type f ! -name submission.csv -delete || true
-            for k in sq10-cpu-hop-c sq10-cpu-hop-d; do mkdir -p "slices/kaggle_${k##*-}"; kaggle kernels output "$KAGGLE_USERNAME/$k" -p "slices/kaggle_${k##*-}" > /dev/null 2>&1 || echo "no output from $k"; find "slices/kaggle_${k##*-}" -type f ! -name submission.csv -delete || true; done
+            for k in sq10-cpu-hop-c sq10-cpu-hop-d sq10-cpu-hop-e sq10-cpu-hop-f; do mkdir -p "slices/kaggle_${k##*-}"; kaggle kernels output "$KAGGLE_USERNAME/$k" -p "slices/kaggle_${k##*-}" > /dev/null 2>&1 || echo "no output from $k"; find "slices/kaggle_${k##*-}" -type f ! -name submission.csv -delete || true; done
             # Colab worker results (private dataset <user>/sq-colab-hop, one CSV of improved puzzles per round)
             mkdir -p colab_dl && kaggle datasets download "$KAGGLE_USERNAME/sq-colab-hop" -p colab_dl --unzip -q 2>/dev/null || echo "no Colab dataset"
             for g in colab_dl/colab_*.csv; do [ -f "$g" ] || continue; n=$(basename "$g" .csv); mkdir -p "slices/$n"; cp "$g" "slices/$n/submission.csv"; done
