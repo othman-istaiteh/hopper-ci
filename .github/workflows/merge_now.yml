@@ -86,6 +86,6 @@ jobs:
           if [ -n "$KAGGLE_KEY" ]; then
             mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
             export KAGGLE_API_TOKEN="$KAGGLE_KEY"
-            KAGGLE_MAX_PER_DAY=${{ inputs.max_per_day || '8' }} KAGGLE_MIN_GAIN=${{ inputs.min_gain || '1e-7' }} python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub on-demand merge ${{ github.run_number }} (${{ inputs.releases }})" | tee -a out/merge.log
+            KAGGLE_MIN_SPACING_H=3 KAGGLE_MAX_PER_DAY=${{ inputs.max_per_day || '8' }} KAGGLE_MIN_GAIN=${{ inputs.min_gain || '1e-7' }} python3 hop/kaggle_submit.py out/merge.log out/submission.csv "GitHub on-demand merge ${{ github.run_number }} (${{ inputs.releases }})" | tee -a out/merge.log
           fi
           gh release upload "$TAG" out/merge.log --clobber
