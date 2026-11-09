@@ -1,0 +1,35 @@
+name: colab_pack
+# 9 Nov 2026: refresh the PRIVATE Kaggle dataset <user>/sq-colab-in that the Colab worker (colab/worker.sh) reads: our code
+# (hop/, colab/) and packings (seeds/, results/) from the private repo, as one tarball. Runs every 4 hours, after the merges.
+on:
+  schedule:
+    - cron: '47 1,5,9,13,17,21 * * *'
+  workflow_dispatch:
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: our code and packings (private repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: upload to the private Kaggle dataset
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          pip install -q kaggle
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          mkdir -p up && tar -czf up/sq_in.tar.gz hop colab seeds results
+          ls -la up
+          printf '{"title": "sq-colab-in", "id": "%s/sq-colab-in", "licenses": [{"name": "CC0-1.0"}]}' "$KAGGLE_USERNAME" > up/dataset-metadata.json
+          if kaggle datasets status "$KAGGLE_USERNAME/sq-colab-in" > /dev/null 2>&1; then
+            kaggle datasets version -p up -m "refresh $(date -u +%m%d-%H%M)" -q
+          else
+            kaggle datasets create -p up -q
+          fi
+          sleep 20; kaggle datasets status "$KAGGLE_USERNAME/sq-colab-in" || true
