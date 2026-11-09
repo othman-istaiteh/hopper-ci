@@ -52,7 +52,7 @@ jobs:
           cd hop
           FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
           PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
-          SQ_IN=$GITHUB_WORKSPACE/slices SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
+          SQ_IN=$GITHUB_WORKSPACE/slices SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_09nov.txt \
           SQ_WORKERS=$(nproc) SQ_MAXC=40 SQ_DEDUP=0 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} HOP_SEED0=500 \
           HOP_NTARGET=1000 HOP_BUDGET_H=4 FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" HOP_ENGINE=${{ matrix.engine }} \
           python3 -u sq10_hop.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/relax_${{ matrix.engine }}.log | tail -30

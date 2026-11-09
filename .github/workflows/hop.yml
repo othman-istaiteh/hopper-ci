@@ -108,7 +108,7 @@ jobs:
           echo "slice $S: targets $SKIP .. $((SKIP + PER))"
           FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq \
           PACKER_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/packer \
-          SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_29oct.txt \
+          SQ_IN=$GITHUB_WORKSPACE/seeds SQ_WORK=$GITHUB_WORKSPACE/work SQ_BOARD=board_09nov.txt \
           SQ_WORKERS=$(nproc) SQ_MAXC=1 HOP_MIN=${{ inputs.hop_min }} HOP_SEEDS=${{ inputs.seeds }} \
           HOP_SEED0=$(( ${{ inputs.seed0 }} + S * 100 )) HOP_NTARGET=$PER HOP_SKIP=$SKIP \
           HOP_BUDGET_H=${{ inputs.budget_h }} FQ_DEADLINE=120 HOP_ARGS="${{ inputs.hop_args }}" SQ_NMIN=${{ inputs.nmin }} HOP_ENGINE=${{ inputs.engine }} HOP_NLIST="$NLIST" HOP_TARGET_FRAC=${{ inputs.target_frac }} \
