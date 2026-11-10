@@ -1,11 +1,11 @@
 name: explore_recover
-# 9 Nov 2026: re-does the publish step of an explore run whose matrix jobs finished but whose publish job GitHub never
+# 9 Nov 2026: re-does the publish step of an explore (or hop) run whose matrix jobs finished but whose publish job GitHub never
 # started (internal server error): downloads that run's sealed artifacts (kept 1 day), certifies, pushes improvements.
 on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: id of the explore run to recover
+        description: id of the explore or hop run to recover
         required: true
 
 permissions:
@@ -41,9 +41,10 @@ jobs:
         run: |
           mkdir -p slices out ours
           cat parts/*/summary_*.txt > out/summary.txt 2>/dev/null || true
-          for d in parts/*/; do cp "$d"/ex_*.log out/ 2>/dev/null || true
-            for f in "$d"/*.csv; do [ -f "$f" ] || continue; t=$(basename "$f" .csv); mkdir -p "slices/$t"; cp "$f" "slices/$t/submission.csv"; done
-          done
+          for d in parts/*/; do cp "$d"/ex_*.log out/ 2>/dev/null || true; done
+          # every CSV in the artifacts (explore parts x*.csv, hop slices .../submission.csv), each as its own slice
+          k=0; while IFS= read -r f; do k=$((k + 1)); t="rec${k}_$(basename "$(dirname "$f")")_$(basename "$f" .csv)"; mkdir -p "slices/$t"; cp "$f" "slices/$t/submission.csv"; done < <(find parts -type f -name '*.csv')
+          echo "recovered $k CSV files"
           ls slices | head -40
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
           (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
