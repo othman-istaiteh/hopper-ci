@@ -15,6 +15,15 @@ on:
       sec:
         description: fq quench seconds per insertion attempt
         default: "90"
+      fq_a:
+        description: fq options for seeds 1 and 2
+        default: "--loosen 1.0"
+      fq_b:
+        description: fq options for seeds 3 and 4
+        default: "--loosen 1.0 --round-r0 0.3 --round-steps 20 --round-press"
+      repeat:
+        description: restart each seed with a new random seed until budget_min is spent (1) or run once (0)
+        default: "0"
 
 permissions:
   contents: write
@@ -50,9 +59,17 @@ jobs:
           for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; done
           (cd hop && python3 best_merge.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/start.csv | tail -1)
           export FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq
+          END=$(( $(date +%s) + ${{ inputs.budget_min }} * 60 ))
           for r in 1 2 3 4; do
-            timeout $(( ${{ inputs.budget_min }} * 60 + 600 )) python3 -u design/grow.py $N $S start.csv $M out/${TAG}_r$r.csv \
-              --sec ${{ inputs.sec }} --budget-min ${{ inputs.budget_min }} --rseed $r > out/${TAG}_r$r.log 2>&1 &
+            if [ $r -le 2 ]; then FA="${{ inputs.fq_a }}"; else FA="${{ inputs.fq_b }}"; fi
+            ( i=0; while :; do
+                rs=$(( r + 4 * i )); left=$(( (END - $(date +%s)) / 60 )); [ $left -ge 3 ] || break
+                timeout $(( left * 60 + 600 )) python3 -u design/grow.py $N $S start.csv $M out/${TAG}_r$rs.csv \
+                  --sec ${{ inputs.sec }} --budget-min $left --rseed $rs --fqargs="$FA" >> out/${TAG}_r$r.log 2>&1
+                [ -f out/${TAG}_r$rs.csv ] && break
+                [ "${{ inputs.repeat }}" = 1 ] || break
+                i=$((i+1))
+              done ) &
           done
           wait
           for r in 1 2 3 4; do echo "== r$r"; tail -3 out/${TAG}_r$r.log; done
