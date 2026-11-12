@@ -25,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   harvest:
@@ -113,6 +114,10 @@ jobs:
           if [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
             F="results/harvest_$(date +%m%d%H)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
             bash hop/data.sh push "results: public harvest $(date +%F)" "$F"
+            # 12 Nov: new public packings are new donors, so rerun the fault-line DP (jonathan1506: rerun after every merge)
+            if [ "$(wc -l < out/improved.csv)" -gt 200 ]; then
+              gh api -X POST repos/${{ github.repository }}/actions/workflows/faultdp.yml/dispatches -f ref=main && echo "dispatched faultdp" || true
+            fi
           else
             echo "nothing beats our packings"
           fi
