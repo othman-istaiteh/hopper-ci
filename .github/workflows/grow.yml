@@ -1,0 +1,111 @@
+name: grow
+# Thursday idea 1 (12 Nov): grow by insertion at a fixed box side. Per task "N:S:START_N", design/grow.py starts from our
+# best packing of START_N squares (side <= S), inserts one square at a large hole, lets fq quench (loosen 1.0) resolve
+# it at side S, certifies with the exact metric, and repeats up to N. 4 random seeds per task run in parallel.
+# The publish job certifies, keeps improvements only and pushes them to results/ in the private repo.
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: JSON list of "N:S:START_N"
+        default: '["176:13.7958:175", "498:22.81:496", "498:22.80:494", "544:23.81:542", "544:23.80:540", "803:28.81:801", "791:28.625:789", "908:30.625:906"]'
+      budget_min:
+        description: minutes per seed
+        default: "120"
+      sec:
+        description: fq quench seconds per insertion attempt
+        default: "90"
+
+permissions:
+  contents: write
+
+jobs:
+  grow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJson(inputs.tasks) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: our code and packings (private repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: build fq (evand, pinned)
+        run: |
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d
+          git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock "/search/packer/*.py"
+          cd search/packer && cargo build --release --bin fq 2>&1 | tail -2
+          ls target/release/fq
+      - name: python deps
+        run: pip install -q numpy mpmath scipy
+      - name: grow ${{ matrix.task }}
+        run: |
+          IFS=: read N S M <<< "${{ matrix.task }}"
+          TAG="g${N}_${S}_${M}"; echo "TAG=$TAG" >> $GITHUB_ENV
+          mkdir -p out ours
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; done
+          (cd hop && python3 best_merge.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/start.csv | tail -1)
+          export FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq
+          for r in 1 2 3 4; do
+            timeout $(( ${{ inputs.budget_min }} * 60 + 600 )) python3 -u design/grow.py $N $S start.csv $M out/${TAG}_r$r.csv \
+              --sec ${{ inputs.sec }} --budget-min ${{ inputs.budget_min }} --rseed $r > out/${TAG}_r$r.log 2>&1 &
+          done
+          wait
+          for r in 1 2 3 4; do echo "== r$r"; tail -3 out/${TAG}_r$r.log; done
+          echo "::notice title=$TAG::$(grep -h -E 'GROW (SUCCESS|reached)|STOP' out/${TAG}_r*.log | tr '\n' ' ' | cut -c1-600)"
+      - name: seal the outputs
+        if: always()
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh seal out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.TAG }}
+          path: out.tar.enc
+          retention-days: 1
+
+  publish:
+    needs: grow
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal parts
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certify, keep improvements, push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: |
+          mkdir -p slices out ours
+          cat parts/*/*.log > out/grow.log 2>/dev/null || true
+          k=0; for f in $(find parts -type f -name '*.csv'); do k=$((k+1)); mkdir -p "slices/g$k"; cp "$f" "slices/g$k/submission.csv"; done
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          grep -h -E 'GROW (SUCCESS|reached)|STOP|^GROW N' out/grow.log > out/summary.txt || true
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/grow_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            DATA_TOKEN="$DATA_TOKEN" bash hop/data.sh push "results: grow run ${{ github.run_number }}" "$F"
+          fi
+          gh release create "grow-${{ github.run_number }}" out/summary.txt out/merge.log --title "grow ${{ github.run_number }}" --notes "tasks ${{ inputs.tasks }}" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
+          echo "::notice title=summary::$(cat out/summary.txt | tr '\n' ' ' | cut -c1-1500)"
