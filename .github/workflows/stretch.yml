@@ -116,5 +116,11 @@ jobs:
             F="results/stretch_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
             DATA_TOKEN="$DATA_TOKEN" bash hop/data.sh push "results: stretch run ${{ github.run_number }}" "$F"
           fi
+          # near misses (within 0.01 of our side) become seeds for relax.yml (packer hop), dir seeds_x7
+          find parts -name '*_near.txt' -exec cat {} + | awk 'NR==1 || !/^id,/' > near.csv
+          if [ "$(wc -l < near.csv)" -gt 1 ]; then
+            mkdir -p seeds_x7; G="seeds_x7/stretch_near_${{ github.run_number }}.csv.gz"; gzip -9 -c near.csv > "$G"
+            DATA_TOKEN="$DATA_TOKEN" bash hop/data.sh push "seeds_x7: stretch near misses run ${{ github.run_number }}" "$G"
+          fi
           gh release create "stretch-${{ github.run_number }}" out/summary.txt out/merge.log --title "stretch ${{ github.run_number }}" --notes "groups ${{ inputs.groups }}" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
           echo "::notice title=summary::$(cat out/summary.txt | tr '\n' ' ' | cut -c1-1500)"
