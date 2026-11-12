@@ -23,6 +23,9 @@ on:
       minutes:
         description: minutes per process
         default: "280"
+      extra:
+        description: extra stretch.py options, e.g. "--pool design/stretch_pool.csv.gz --skip-ours"
+        default: ""
 
 permissions:
   contents: write
@@ -61,7 +64,7 @@ jobs:
           i=0; for s in $SP; do eval "P$((i % 4))=\"\${P$((i % 4))} $s\""; i=$((i+1)); done
           for k in 0 1 2 3; do eval "L=\$P$k"; [ -n "$L" ] || continue
             timeout $(( ${{ inputs.minutes }} * 60 + 900 )) python3 -u design/stretch.py start.csv $L --out out/${TAG}_p$k.csv --steps="${{ inputs.steps }}" \
-              --cuts ${{ inputs.cuts }} --per-n ${{ inputs.per_n }} --sec ${{ inputs.sec }} --minutes ${{ inputs.minutes }} --board hop/board_09nov.txt > out/${TAG}_p$k.log 2>&1 &
+              --cuts ${{ inputs.cuts }} --per-n ${{ inputs.per_n }} --sec ${{ inputs.sec }} --minutes ${{ inputs.minutes }} --board hop/board_09nov.txt ${{ inputs.extra }} > out/${TAG}_p$k.log 2>&1 &
           done
           wait
           grep -h -E "WIN|^STRETCH" out/*.log | tail -40
