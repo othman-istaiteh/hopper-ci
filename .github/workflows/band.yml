@@ -28,6 +28,9 @@ on:
       tau_max:
         description: largest overlap tolerance of the tolerant fill in bandseed.py
         default: "0.16"
+      band_env:
+        description: extra env for bandseed.py, e.g. "BAND_PHI=0:25 BAND_TH=3:30" (shallow full-span band, 12 Nov); empty = diagonal
+        default: ""
 
 permissions:
   contents: write
@@ -60,7 +63,7 @@ jobs:
           IFS=: read N S SD W0 W1 <<< "${{ matrix.task }}"
           TAG="b${N}_${S}_${SD}"; echo "TAG=$TAG" >> $GITHUB_ENV
           mkdir -p out slices
-          EVAND_PACKER=$GITHUB_WORKSPACE/evand/search/packer timeout $(( ${{ inputs.search_min }} * 60 + 600 )) \
+          env ${{ inputs.band_env }} EVAND_PACKER=$GITHUB_WORKSPACE/evand/search/packer timeout $(( ${{ inputs.search_min }} * 60 + 600 )) \
           python3 -u design/bandseed.py $N $S $(( ${{ inputs.search_min }} * 60 )) $SD $W0 $W1 out/${TAG}_seed.csv ${{ inputs.tau_max }} 2>&1 | tee out/$TAG.log | tail -5
           echo "::notice title=$TAG seed::$(grep BANDSEED out/$TAG.log | cut -c1-600)"
       - name: relax the seed
