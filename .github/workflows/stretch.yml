@@ -1,0 +1,120 @@
+name: stretch
+# 12 Nov: stretch good packings to nearby n (design/stretch.py, idea from az05192000gmailcom's public notebook, own code):
+# cut each specimen along x and y through its tilted arms, copy or remove one slab per axis, fq quench, keep the result
+# when it beats our side at the new n. Each matrix job takes one group of specimens and runs 4 processes in parallel.
+on:
+  workflow_dispatch:
+    inputs:
+      groups:
+        description: JSON list of comma-separated specimen lists (one job each)
+        default: '["693,641,592"]'
+      steps:
+        description: grid steps to try
+        default: "-1,1"
+      cuts:
+        description: cut positions per axis
+        default: "5"
+      per_n:
+        description: cut pairs tried per resulting n
+        default: "2"
+      sec:
+        description: fq quench seconds per stretched packing
+        default: "120"
+      minutes:
+        description: minutes per process
+        default: "280"
+
+permissions:
+  contents: write
+
+jobs:
+  stretch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJson(inputs.groups) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: our code and packings (private repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - name: build fq (evand, pinned)
+        run: |
+          git clone -q --filter=blob:none --sparse https://github.com/evand/square-packing.git evand
+          cd evand && git checkout -q 0e76d9fe5e48fc2a614e3c132a0a3fd67e0a6a8d
+          git sparse-checkout set --no-cone /search/packer/src/ /search/packer/Cargo.toml /search/packer/Cargo.lock "/search/packer/*.py"
+          cd search/packer && cargo build --release --bin fq 2>&1 | tail -2
+          ls target/release/fq
+      - name: python deps
+        run: pip install -q numpy mpmath scipy
+      - name: stretch ${{ matrix.group }}
+        run: |
+          TAG="s$(echo '${{ matrix.group }}' | cut -d, -f1)_$(echo '${{ matrix.group }}' | tr ',' '\n' | wc -l)"; echo "TAG=$TAG" >> $GITHUB_ENV
+          mkdir -p out ours
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; done
+          (cd hop && python3 best_merge.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/start.csv | tail -1)
+          export FQ_BIN=$GITHUB_WORKSPACE/evand/search/packer/target/release/fq
+          SP=$(echo '${{ matrix.group }}' | tr ',' ' ')
+          i=0; for s in $SP; do eval "P$((i % 4))=\"\${P$((i % 4))} $s\""; i=$((i+1)); done
+          for k in 0 1 2 3; do eval "L=\$P$k"; [ -n "$L" ] || continue
+            timeout $(( ${{ inputs.minutes }} * 60 + 900 )) python3 -u design/stretch.py start.csv $L --out out/${TAG}_p$k.csv --steps="${{ inputs.steps }}" \
+              --cuts ${{ inputs.cuts }} --per-n ${{ inputs.per_n }} --sec ${{ inputs.sec }} --minutes ${{ inputs.minutes }} --board hop/board_09nov.txt > out/${TAG}_p$k.log 2>&1 &
+          done
+          wait
+          grep -h -E "WIN|^STRETCH" out/*.log | tail -40
+          echo "::notice title=$TAG::$(grep -h -E '^STRETCH' out/*.log | tr '\n' ' ' | cut -c1-900)"
+      - name: seal the outputs
+        if: always()
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh seal out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.TAG }}
+          path: out.tar.enc
+          retention-days: 1
+
+  publish:
+    needs: stretch
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: our packings (private data repo)
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh pull
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: unseal the artifacts
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: bash hop/data.sh unseal parts
+      - name: python deps
+        run: pip install -q numpy mpmath
+      - name: certify, keep improvements, push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: |
+          mkdir -p slices out ours
+          cat parts/*/*.log > out/stretch.log 2>/dev/null || true
+          k=0; for f in $(find parts -type f -name '*.csv'); do k=$((k+1)); mkdir -p "slices/s$k"; cp "$f" "slices/s$k/submission.csv"; done
+          for f in seeds/*.csv.gz results/*.csv.gz; do n=$(basename "$f" .csv.gz); mkdir -p "ours/$n" "slices/$n"; gunzip -c "$f" > "ours/$n/submission.csv"; cp "ours/$n/submission.csv" "slices/$n/submission.csv"; done
+          (cd hop && SQ_IN=$GITHUB_WORKSPACE/slices SQ_QUENCH=0 SQ_MAXC=3 SQ_WORKERS=$(nproc) \
+            python3 -u sq09_requench.py $GITHUB_WORKSPACE/out/submission.csv | grep -v "^SIDES" | tee $GITHUB_WORKSPACE/out/merge.log | tail -5
+           python3 improved_only.py $GITHUB_WORKSPACE/ours $GITHUB_WORKSPACE/out/submission.csv $GITHUB_WORKSPACE/out/improved.csv | tee -a $GITHUB_WORKSPACE/out/merge.log)
+          grep -h -E 'WIN|^STRETCH' out/stretch.log > out/summary.txt || true
+          if [ -f out/improved.csv ] && [ "$(wc -l < out/improved.csv)" -gt 1 ]; then
+            F="results/stretch_$(date +%m%d)_${{ github.run_number }}.csv.gz"; gzip -9 -c out/improved.csv > "$F"
+            DATA_TOKEN="$DATA_TOKEN" bash hop/data.sh push "results: stretch run ${{ github.run_number }}" "$F"
+          fi
+          gh release create "stretch-${{ github.run_number }}" out/summary.txt out/merge.log --title "stretch ${{ github.run_number }}" --notes "groups ${{ inputs.groups }}" 2> rel.err || echo "::warning::release failed $(head -c 400 rel.err)"
+          echo "::notice title=summary::$(cat out/summary.txt | tr '\n' ' ' | cut -c1-1500)"
