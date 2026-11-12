@@ -56,6 +56,9 @@ jobs:
             kaggle kernels list --competition "$COMP" --sort-by dateRun --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 > refs.txt
             kaggle kernels list --competition "$COMP" --sort-by voteCount --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 >> refs.txt
             kaggle kernels list --competition "$COMP" --sort-by scoreAscending --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 >> refs.txt
+            # 12 Nov: notebooks not attached to the competition listing (jonathan1506 "50-top-2-6-22-1793...") were missed
+            kaggle kernels list --search "squares in squares" --sort-by dateRun --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 >> refs.txt
+            kaggle kernels list --search "squares" --sort-by voteCount --page-size $T --csv 2>/dev/null | tail -n +2 | cut -d, -f1 >> refs.txt
             REFS=$(sort -u refs.txt | grep / | tr '\n' ',')
           fi
           echo "refs: $REFS"
