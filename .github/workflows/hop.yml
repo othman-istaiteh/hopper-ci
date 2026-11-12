@@ -156,6 +156,10 @@ jobs:
           kaggle kernels output "$KAGGLE_USERNAME/notebook5586544269" -p slices/kaggle_merge && ls -la slices/kaggle_merge || echo "Kaggle output fetch failed"
           find slices/kaggle_merge -type f ! -name submission.csv -delete || true
           for k in sq10-cpu-hop-c sq10-cpu-hop-d sq10-cpu-hop-e sq10-cpu-hop-f; do mkdir -p "slices/kaggle_${k##*-}"; kaggle kernels output "$KAGGLE_USERNAME/$k" -p "slices/kaggle_${k##*-}" > /dev/null 2>&1 || echo "no output from $k"; find "slices/kaggle_${k##*-}" -type f ! -name submission.csv -delete || true; done
+          # 12 Nov: Colab results (private dataset <user>/sq-colab-hop: hop worker and island GA) also enter the chain merge,
+          # so they are kept in seeds/<label> even after a later Colab session replaces the dataset files
+          mkdir -p colab_dl && kaggle datasets download "$KAGGLE_USERNAME/sq-colab-hop" -p colab_dl --unzip -q 2>/dev/null || echo "no Colab dataset"
+          for g in colab_dl/colab_*.csv; do [ -f "$g" ] || continue; n=$(basename "$g" .csv); mkdir -p "slices/$n"; cp "$g" "slices/$n/submission.csv"; done
       - name: certified merge of the slices and the seeds
         run: |
           mkdir -p out
