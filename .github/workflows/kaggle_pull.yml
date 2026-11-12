@@ -6,6 +6,9 @@ on:
       ref:
         description: notebook ref owner/slug
         required: true
+permissions:
+  contents: write
+
 jobs:
   pull:
     runs-on: ubuntu-latest
@@ -20,8 +23,9 @@ jobs:
           mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
           export KAGGLE_API_TOKEN="$KAGGLE_KEY"
           mkdir -p src && kaggle kernels pull "${{ inputs.ref }}" -p src -m && ls -la src
-      - uses: actions/upload-artifact@v4
-        with:
-          name: src
-          path: src
-          retention-days: 1
+      - name: publish as release assets (the notebook is public)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view src-pull -R ${{ github.repository }} >/dev/null 2>&1 || gh release create src-pull -R ${{ github.repository }} --title "pulled notebook sources" --notes "public Kaggle notebook sources"
+          gh release upload src-pull src/* --clobber -R ${{ github.repository }}
