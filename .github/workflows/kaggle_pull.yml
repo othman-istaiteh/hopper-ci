@@ -1,0 +1,27 @@
+name: kaggle_pull
+# Pull the source of one public Kaggle notebook (read-only) and keep it as a 1-day artifact, for reading before use.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: notebook ref owner/slug
+        required: true
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: pull
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          pip install -q kaggle
+          mkdir -p ~/.kaggle && printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json && chmod 600 ~/.kaggle/kaggle.json
+          export KAGGLE_API_TOKEN="$KAGGLE_KEY"
+          mkdir -p src && kaggle kernels pull "${{ inputs.ref }}" -p src -m && ls -la src
+      - uses: actions/upload-artifact@v4
+        with:
+          name: src
+          path: src
+          retention-days: 1
