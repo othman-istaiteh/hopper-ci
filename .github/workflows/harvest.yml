@@ -208,7 +208,7 @@ jobs:
               done
             done
             # known sources that publish packings as .csv.gz or JSON outside the code-search index
-            echo yugavka/square_in_squares; echo sosudo/squares_in_squares; echo TheSnakeFang/squarepack-certs
+            echo yugavka/square_in_squares; echo sosudo/squares_in_squares; echo TheSnakeFang/squarepack-certs; echo oceanwang525-creator/squares-in-squares
           } | grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' | sort -u > hits.txt || true
           [ -s cs_warn.txt ] && echo "::warning title=code search::$(tr '\n' ' ' < cs_warn.txt | cut -c1-600)"
           # keep packing-related names; code-search hits are kept whatever their name
