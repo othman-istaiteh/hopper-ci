@@ -1,0 +1,52 @@
+name: w04
+on:
+  schedule:
+  - cron: 41 1 * * *
+  workflow_dispatch:
+    inputs:
+      passes:
+        default: '3'
+      q_sec:
+        default: '60'
+permissions:
+  contents: write
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_1.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_2.sh"
+    - env:
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_3.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_4.sh"
+    - env:
+        E1: ${{ github.workspace }}
+        E2: ${{ inputs.passes || '3' }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_5.sh"
+    - if: inputs.q_sec != '0'
+      env:
+        E1: ${{ github.workspace }}
+        E2: ${{ inputs.q_sec || '60' }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_6.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        E1: ${{ github.run_number }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_7.sh"
+    - if: always()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ github.run_number }}
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        CI_PRIV_RELEASES: '1'
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w04_j1_8.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w04-${{ github.run_number }}" "logs w04 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true

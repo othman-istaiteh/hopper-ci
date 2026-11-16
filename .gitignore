@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data/
+seeds/
+results/
+out.tar.enc
+clone.err
+ci/
+tags_*.txt
+all_tags.txt

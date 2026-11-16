@@ -1,0 +1,114 @@
+name: w05
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        default: '20'
+      deadline:
+        default: '300'
+      targets:
+        default: '547'
+      skip:
+        default: '0'
+      sched:
+        default: ''
+      descend:
+        default: 'no'
+      ref2:
+        default: ''
+permissions:
+  contents: write
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh ci
+    - id: m
+      env:
+        E1: ${{ inputs.jobs }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j1_1.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w05-${{ github.run_number }}" "logs w05 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
+  j2:
+    needs: j1
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.j1.outputs.matrix) }}
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - env:
+        E1: ${{ inputs.ref2 }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j2_1.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j2_2.sh"
+    - env:
+        E1: ${{ inputs.jobs }}
+        E2: ${{ inputs.targets }}
+        E3: ${{ matrix.slice }}
+        E4: ${{ inputs.skip }}
+        E5: ${{ inputs.descend }}
+        E6: ${{ inputs.sched }}
+        E7: ${{ github.run_number }}
+        E8: ${{ inputs.deadline }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j2_3.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j2_4.sh"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: polish-${{ matrix.slice }}
+        path: out.tar.enc
+        retention-days: 1
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w05-${{ github.run_number }}" "logs w05 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
+  j3:
+    needs: j2
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - uses: actions/download-artifact@v4
+      with:
+        path: slices
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j3_1.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j3_2.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j3_3.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        E1: ${{ github.run_number }}
+        E2: ${{ inputs.sched }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j3_4.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ github.run_number }}
+        E2: ${{ github.run_id }}
+        E3: ${{ inputs.sched }}
+        E4: ${{ inputs.ref2 }}
+        CI_PRIV_RELEASES: '1'
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w05_j3_5.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w05-${{ github.run_number }}" "logs w05 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true

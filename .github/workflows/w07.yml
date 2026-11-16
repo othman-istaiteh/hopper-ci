@@ -1,0 +1,91 @@
+name: w07
+on:
+  workflow_dispatch:
+    inputs:
+      refs:
+        default: ''
+      top:
+        default: '15'
+      wide:
+        default: 'no'
+      refs2:
+        default: ''
+      top2:
+        default: '10'
+  schedule:
+  - cron: 17 */6 * * *
+permissions:
+  contents: write
+  actions: write
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j1_1.sh"
+    - env:
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        E1: ${{ inputs.refs }}
+        E2: ${{ inputs.top }}
+        E3: ${{ inputs.top2 || '10' }}
+        E4: ${{ inputs.refs2 }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j1_2.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j1_3.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ github.run_number }}
+        E2: ${{ github.repository }}
+        CI_PRIV_RELEASES: '1'
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j1_4.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w07-${{ github.run_number }}" "logs w07 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
+  j2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j2_1.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j2_2.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j2_3.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j2_4.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        E1: ${{ github.run_number }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j2_5.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w07-${{ github.run_number }}" "logs w07 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
+  j3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j3_1.sh"
+    - env:
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ inputs.wide }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j3_2.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ github.run_number }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w07_j3_3.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w07-${{ github.run_number }}" "logs w07 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true

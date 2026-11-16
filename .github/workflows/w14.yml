@@ -1,0 +1,22 @@
+name: w14
+on:
+  schedule:
+  - cron: 47 1,5,9,13,17,21 * * *
+  workflow_dispatch: null
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - env:
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w14_j1_1.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w14-${{ github.run_number }}" "logs w14 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true

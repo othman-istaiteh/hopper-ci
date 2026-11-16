@@ -1,0 +1,51 @@
+name: w08
+on:
+  schedule:
+  - cron: 23 1,5,9,13,17,21 * * *
+  workflow_dispatch:
+    inputs:
+      releases:
+        default: ''
+      fetch:
+        default: 'yes'
+      max_per_day:
+        default: '8'
+      min_gain:
+        default: 1e-7
+permissions:
+  contents: write
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w08_j1_1.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ inputs.releases }}
+        E2: ${{ inputs.fetch || 'yes' }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w08_j1_2.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w08_j1_3.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ github.run_number }}
+        E2: ${{ github.event_name }}
+        E3: ${{ inputs.releases }}
+        E4: ${{ inputs.max_per_day || '8' }}
+        E5: ${{ inputs.min_gain || '1e-7' }}
+        CI_PRIV_RELEASES: '1'
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w08_j1_4.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w08-${{ github.run_number }}" "logs w08 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true

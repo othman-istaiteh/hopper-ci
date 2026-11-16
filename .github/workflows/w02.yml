@@ -1,0 +1,95 @@
+name: w02
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        default: '["299,335,412", "454,498,544"]'
+      minutes:
+        default: '100'
+      smax:
+        default: '0.02'
+      queue:
+        default: '[]'
+      width:
+        default: '6'
+      chain:
+        default: 'yes'
+      rotation:
+        default: ''
+permissions:
+  contents: write
+  actions: write
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJson(inputs.tasks) }}
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j1_1.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j1_2.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j1_3.sh"
+    - env:
+        E1: ${{ github.workspace }}
+        E2: ${{ matrix.task }}
+        E3: ${{ inputs.smax }}
+        E4: ${{ inputs.minutes }}
+        E5: ${{ github.run_number }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j1_4.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j1_5.sh"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.TAG }}
+        path: out.tar.enc
+        retention-days: 1
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w02-${{ github.run_number }}" "logs w02 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
+  j2:
+    needs: j1
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - uses: actions/download-artifact@v4
+      with:
+        path: parts
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j2_1.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j2_2.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ github.run_number }}
+        E2: ${{ inputs.tasks }}
+        E3: ${{ inputs.minutes }}
+        CI_PRIV_RELEASES: '1'
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j2_3.sh"
+    - if: ${{ inputs.chain != 'no' }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        E1: ${{ inputs.queue }}
+        E2: ${{ inputs.rotation }}
+        E3: ${{ inputs.width }}
+        E4: ${{ inputs.minutes }}
+        E5: ${{ inputs.smax }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w02_j2_4.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w02-${{ github.run_number }}" "logs w02 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true

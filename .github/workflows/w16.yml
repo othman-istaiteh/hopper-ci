@@ -1,0 +1,55 @@
+name: w16
+on:
+  workflow_dispatch:
+    inputs:
+      releases:
+        default: 'yes'
+      keep:
+        default: ''
+      artifacts:
+        default: 'yes'
+      squash:
+        default: 'no'
+      runs:
+        default: 'no'
+      before:
+        default: ''
+permissions:
+  contents: write
+  actions: write
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+        fetch-depth: 0
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh ci
+    - if: inputs.releases == 'yes'
+      env:
+        E1: ${{ inputs.keep }}
+        E2: ${{ github.repository }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w16_j1_1.sh"
+    - if: inputs.artifacts == 'yes'
+      env:
+        E1: ${{ github.repository }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w16_j1_2.sh"
+    - if: inputs.squash == 'yes'
+      env:
+        E1: ${{ github.repository }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w16_j1_3.sh"
+    - if: inputs.runs == 'yes'
+      env:
+        E1: ${{ github.repository }}
+        E2: ${{ inputs.before }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w16_j1_4.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w16-${{ github.run_number }}" "logs w16 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
