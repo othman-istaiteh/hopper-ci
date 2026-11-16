@@ -2,6 +2,7 @@ name: w09
 on:
   schedule:
   - cron: 47 */3 * * *
+  - cron: 17 1-23/3 * * *
   workflow_dispatch:
     inputs:
       dry:
