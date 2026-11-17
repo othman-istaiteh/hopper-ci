@@ -3,6 +3,9 @@ on:
   schedule:
   - cron: 13 6 * * *
   workflow_dispatch:
+    inputs:
+      quick:
+        default: 'no'
 permissions:
   contents: read
   actions: read
@@ -19,6 +22,7 @@ jobs:
         DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
         CI_PRIV_RELEASES: '1'
         GH_TOKEN: ${{ github.token }}
+        E1: ${{ inputs.quick }}
         KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
