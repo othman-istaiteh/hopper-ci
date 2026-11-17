@@ -1,0 +1,26 @@
+name: w17
+on:
+  workflow_dispatch:
+    inputs:
+      ns:
+        default: ''
+      minutes:
+        default: '220'
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh ci
+    - env:
+        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        E1: ${{ inputs.ns }}
+        E2: ${{ inputs.minutes }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w17_j1_1.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w17-${{ github.run_number }}" "logs w17 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || true
