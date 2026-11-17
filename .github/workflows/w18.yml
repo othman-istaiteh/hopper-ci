@@ -1,0 +1,32 @@
+name: w18
+on:
+  schedule:
+  - cron: 13 6 * * *
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh ci
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        CI_PRIV_RELEASES: '1'
+        GH_TOKEN: ${{ github.token }}
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        MAIL_USER: ${{ secrets.MAIL_USER }}
+        MAIL_PASS: ${{ secrets.MAIL_PASS }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w18_j1_1.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w18-${{ github.run_number }}" "logs w18 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || true
