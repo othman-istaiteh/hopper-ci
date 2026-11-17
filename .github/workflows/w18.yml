@@ -25,6 +25,8 @@ jobs:
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         MAIL_USER: ${{ secrets.MAIL_USER }}
         MAIL_PASS: ${{ secrets.MAIL_PASS }}
+        TG_TOKEN: ${{ secrets.TG_TOKEN }}
+        TG_CHAT: ${{ secrets.TG_CHAT }}
       run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w18_j1_1.sh"
     - if: always()
       env:
