@@ -6,9 +6,13 @@ on:
         default: ''
       minutes:
         default: '220'
+permissions:
+  contents: read
+  actions: write
 jobs:
   j1:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
     - uses: actions/checkout@v4
     - env:
@@ -17,6 +21,7 @@ jobs:
     - env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        GH_TOKEN: ${{ github.token }}
         E1: ${{ inputs.ns }}
         E2: ${{ inputs.minutes }}
       run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w17_j1_1.sh"
