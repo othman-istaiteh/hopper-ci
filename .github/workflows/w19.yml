@@ -1,0 +1,35 @@
+name: w19
+on:
+  workflow_dispatch:
+    inputs:
+      slot:
+        default: ''
+      ns:
+        default: ''
+      minutes:
+        default: ''
+      procs:
+        default: ''
+permissions:
+  contents: read
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - env:
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        E1: ${{ inputs.slot }}
+        E2: ${{ inputs.ns }}
+        E3: ${{ inputs.minutes }}
+        E4: ${{ inputs.procs }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w19_j1_1.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w19-${{ github.run_number }}" "logs w19 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
