@@ -24,6 +24,7 @@ jobs:
     - env:
         KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
         E1: ${{ inputs.slot }}
         E2: ${{ inputs.ns }}
         E3: ${{ inputs.minutes }}
