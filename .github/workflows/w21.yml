@@ -1,0 +1,80 @@
+name: w21
+on:
+  workflow_dispatch:
+    inputs:
+      groups:
+        default: '["0/4","1/4","2/4","3/4"]'
+      minutes:
+        default: '290'
+      top:
+        default: '80'
+      room:
+        default: '-0.06'
+permissions:
+  contents: write
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJson(inputs.groups || '["0/4","1/4","2/4","3/4"]') }}
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w21_j1_1.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w21_j1_2.sh"
+    - env:
+        E1: ${{ matrix.group }}
+        E2: ${{ inputs.minutes || '290' }}
+        E3: ${{ inputs.top || '80' }}
+        E4: ${{ inputs.room || '-0.06' }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w21_j1_3.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w21_j1_4.sh"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ${{ env.TAG }}
+        path: out.tar.enc
+        retention-days: 1
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w21-${{ github.run_number }}" "logs w21 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
+  j2:
+    needs: j1
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: bash hop/data.sh pull
+    - uses: actions/download-artifact@v4
+      with:
+        path: parts
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w21_j2_1.sh"
+    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w21_j2_2.sh"
+    - env:
+        GH_TOKEN: ${{ github.token }}
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        E1: ${{ github.run_number }}
+        E2: ${{ inputs.groups || 'default' }}
+        CI_PRIV_RELEASES: '1'
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w21_j2_3.sh"
+    - if: always()
+      env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: ls "$RUNNER_TEMP"/cilogs/*.log > /dev/null 2>&1 || exit 0; bash hop/data.sh release "logs-w21-${{ github.run_number }}" "logs w21 ${{ github.run_number }}" "step logs" "$RUNNER_TEMP"/cilogs/*.log || true
