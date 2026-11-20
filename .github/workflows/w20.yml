@@ -1,5 +1,7 @@
 name: w20
 on:
+  schedule:
+  - cron: 41 10 * * *
   workflow_dispatch:
     inputs:
       groups:
@@ -19,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ${{ fromJson(inputs.groups) }}
+        group: ${{ fromJson(inputs.groups || '["3/2/0","3/2/1","8","2","4,5,6,7,9"]') }}
     steps:
     - uses: actions/checkout@v4
     - env:
@@ -31,9 +33,9 @@ jobs:
       run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w20_j1_2.sh"
     - env:
         E1: ${{ matrix.group }}
-        E2: ${{ inputs.minutes }}
-        E3: ${{ inputs.top }}
-        E4: ${{ inputs.room }}
+        E2: ${{ inputs.minutes || '290' }}
+        E3: ${{ inputs.top || '3' }}
+        E4: ${{ inputs.room || '-0.06' }}
       run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w20_j1_3.sh"
     - if: always()
       env:
@@ -71,7 +73,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
         E1: ${{ github.run_number }}
-        E2: ${{ inputs.groups }}
+        E2: ${{ inputs.groups || 'default' }}
         CI_PRIV_RELEASES: '1'
       run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w20_j2_3.sh"
     - if: always()
