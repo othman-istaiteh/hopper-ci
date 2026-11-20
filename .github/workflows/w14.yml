@@ -15,6 +15,7 @@ jobs:
     - env:
         KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
       run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w14_j1_1.sh"
     - if: always()
       env:
