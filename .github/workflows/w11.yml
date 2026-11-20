@@ -1,5 +1,7 @@
 name: w11
 on:
+  schedule:
+  - cron: 29 4 * * *
   workflow_dispatch: null
 permissions:
   contents: write
