@@ -22,6 +22,7 @@ jobs:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         GH_TOKEN: ${{ github.token }}
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
         E1: ${{ inputs.ns }}
         E2: ${{ inputs.minutes }}
       run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w17_j1_1.sh"

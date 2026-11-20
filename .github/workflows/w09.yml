@@ -23,7 +23,9 @@ jobs:
     - env:
         DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
       run: bash hop/data.sh pull
-    - run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w09_j1_1.sh"
+    - env:
+        DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      run: python3 "$GITHUB_WORKSPACE/ci/r.py" "$GITHUB_WORKSPACE/ci/w09_j1_1.sh"
     - env:
         KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
